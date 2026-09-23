@@ -339,67 +339,9 @@ def individual_fits(fit: dict, theme: Theme, log_scale: bool = False,
 
 
 # --------------------------------------------------------------------------
-# Does the distinguishing feature earn its place?
+# Nested comparisons
 # --------------------------------------------------------------------------
 
-#: Change in objective function at p = 0.05 for one and two parameters.
+#: Change in objective function at p = 0.05, by degrees of freedom given up.
+#: The threshold a feature has to clear to be worth the parameters it costs.
 CHI2_95 = {1: 3.84, 2: 5.99, 3: 7.81}
-
-
-def comparison_plot(rows: list[dict], theme: Theme) -> bytes | None:
-    """How much worse the simpler model fits, for every model in the library.
-
-    Each bar is the increase in objective function when that model's
-    distinguishing feature is switched off and everything else is
-    re-estimated. The marker is the 95% threshold for the number of
-    parameters given up, so a bar reaching past it is a feature that pays
-    for itself on this data.
-
-    The scale is logarithmic because the answers are not remotely the same
-    size, and that is itself the finding: the tumour model's resistance
-    term is not a marginal improvement, it is the difference between a
-    model that can bend the way the data bends and one that cannot.
-    """
-    rows = [r for r in rows if r and r.get("delta_ofv") is not None]
-    if not rows:
-        return None
-
-    fig, ax = panel(theme, width=8.4, height=0.72 * len(rows) + 2.0)
-    style_axes(ax, theme, xgrid=True, ygrid=False)
-
-    ys = np.arange(len(rows))[::-1]
-    for y, r in zip(ys, rows, strict=True):
-        delta = max(float(r["delta_ofv"]), 0.01)
-        threshold = CHI2_95.get(int(r["df"] or 0))
-        beats = threshold is not None and delta > threshold
-        colour = theme.series[0] if (beats or not r["nested"]) else theme.warning
-        ax.plot([0.01, delta], [y, y], color=colour, linewidth=3.0,
-                solid_capstyle="round", alpha=0.85, zorder=3)
-        ax.scatter([delta], [y], s=40, color=colour, zorder=4,
-                   edgecolors=theme.surface, linewidths=1.4)
-        label = f"+{delta:.0f}"
-        if r["nested"] and r.get("p_value") is not None:
-            label += f"   p {'<' if r['p_value'] < 1e-4 else '='} " + (
-                "0.0001" if r["p_value"] < 1e-4 else f"{r['p_value']:.3g}")
-        else:
-            label += "   same parameter count, so no p-value"
-        ax.annotate(label, xy=(delta, y), xytext=(10, 0),
-                    textcoords="offset points", va="center",
-                    fontsize=SIZE_NOTE, color=theme.ink_2)
-        if threshold is not None:
-            ax.scatter([threshold], [y], marker="|", s=150,
-                       color=theme.ink_3, zorder=5, linewidths=1.4)
-
-    ax.set_yticks(ys)
-    ax.set_yticklabels([r["feature"] for r in rows], fontsize=SIZE_LABEL)
-    ax.set_xscale("log")
-    ax.set_xlim(0.8, max(float(r["delta_ofv"]) for r in rows) * 9)
-    plain_log_ticks(ax, "x")
-    ax.set_xlabel("Increase in objective function without the feature "
-                  "(log scale)")
-    ax.set_ylim(-0.8, len(rows) - 0.2)
-    title_block(ax, theme, "Does each model's distinguishing feature earn it?",
-                "Bar is the cost of dropping it; the tick is the 95% "
-                "threshold for the parameters given up")
-    fig.tight_layout()
-    return finish(fig)

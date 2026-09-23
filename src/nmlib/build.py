@@ -610,29 +610,6 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
     ]
     parts.append('<div class="tiles">' + "".join(tiles) + "</div>")
 
-    if comparisons:
-        parts.append('<section class="card">')
-        parts.append("<h2>Does each model earn its complexity?</h2>")
-        parts.append(
-            '<p class="why">A model that fits its data is not the same as a '
-            "model worth writing: the simpler alternative might fit it just "
-            "as well, for fewer parameters. Every model "
-            "in this library exists because of one feature that separates it "
-            "from an obvious simpler alternative &mdash; a second "
-            "compartment, a resistance term, a turnover step, a shape "
-            "parameter, a between-subject variance. Each is switched off "
-            "here and everything else re-estimated, so the comparison is "
-            "between two fitted models rather than between a fit and a "
-            "guess, and the increase in objective function is what that "
-            "feature was buying.</p>")
-        parts.append(_fig_pair(
-            diagnostics.comparison_plot(comparisons, LIGHT),
-            diagnostics.comparison_plot(comparisons, DARK),
-            "Cost of dropping each model's distinguishing feature",
-            "Each model's own section below gives the question this is "
-            "answering, and the caveats where the null sits on a boundary."))
-        parts.append("</section>")
-
     for m in CATALOGUE:
         parts.append(_model_section(root, m, summary[m["key"]], checks))
 
