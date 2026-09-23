@@ -234,8 +234,10 @@ def _diagnostics_html(root: Path, m: dict, df, info: dict) -> str:
     st = fit.get("status", {})
     if st:
         blocks.append(
-            f'<p class="problem">FOCEi, objective function '
-            f'{st.get("objective", "n/a")}, {st.get("seconds", "?")} s.</p>')
+            f'<p class="problem">'
+            f'{html.escape(str(st.get("method", "?")).upper())}, '
+            f'objective function {st.get("objective") or "not reported"}, '
+            f'{st.get("seconds", "?")} s.</p>')
 
     blocks.append(_fig_pair(
         diagnostics.gof_panel(fit, LIGHT, log_scale),

@@ -125,17 +125,21 @@ def simulate_tgi_claret(n_subjects=80, seed=202) -> Simulated:
     """
     rng = np.random.default_rng(seed)
     truth = dict(TVY0=50.0, TVKL=0.006, TVKD=0.012, TVLAMBDA=0.015,
-                 IIV_Y0_CV=0.45, IIV_KL_CV=0.50, IIV_KD_CV=0.60,
-                 PROP_ERR=0.12)
+                 IIV_Y0_CV=0.35, IIV_KL_CV=0.35, IIV_KD_CV=0.40,
+                 PROP_ERR=0.12, EXPO_CV=0.30)
 
-    # Exposure: a steady average concentration per arm, as a trial would give.
+    # Nominal exposure per arm. Each subject's actual exposure varies around
+    # the arm mean, as it would with real PK variability -- and that spread
+    # is what identifies the exposure-response slope. Three fixed exposures,
+    # one of them zero, would leave the slope estimated from two points.
     arms = {0: 0.0, 1: 15.0, 2: 40.0}
-    days = np.array([0, 21, 42, 63, 84, 126, 168, 210, 252])
+    days = np.array([0, 21, 42, 63, 84, 105, 126, 168, 189, 210, 252])
 
     rows = []
     for i in range(1, n_subjects + 1):
         arm = int(rng.integers(0, 3))
-        expo = arms[arm]
+        expo = arms[arm] * (_lognormal(rng, truth["EXPO_CV"]) if arms[arm] else 1.0)
+        expo = round(expo, 2)
         y0 = truth["TVY0"] * _lognormal(rng, truth["IIV_Y0_CV"])
         kl = truth["TVKL"] * _lognormal(rng, truth["IIV_KL_CV"])
         kd = truth["TVKD"] * _lognormal(rng, truth["IIV_KD_CV"])

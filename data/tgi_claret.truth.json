@@ -4,10 +4,11 @@
     "TVKL": 0.006,
     "TVKD": 0.012,
     "TVLAMBDA": 0.015,
-    "IIV_Y0_CV": 0.45,
-    "IIV_KL_CV": 0.5,
-    "IIV_KD_CV": 0.6,
-    "PROP_ERR": 0.12
+    "IIV_Y0_CV": 0.35,
+    "IIV_KL_CV": 0.35,
+    "IIV_KD_CV": 0.4,
+    "PROP_ERR": 0.12,
+    "EXPO_CV": 0.3
   },
   "notes": {
     "structure": "Claret tumour growth inhibition",
