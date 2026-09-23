@@ -1,9 +1,8 @@
 # NONMEM model library
 
 Control streams for the model types that come up repeatedly in drug
-development, each with a simulated dataset to run against, the parameters it
-was generated from, and an estimation run that tries to get those parameters
-back.
+development. Each one is fitted here, diagnosed, and tested against the
+simpler model it would have to beat to be worth writing.
 
 **[View the dashboard](https://wrlog.github.io/nonmem-model-library/)**
 
@@ -35,19 +34,37 @@ Starting values are deliberately displaced from the values used to simulate,
 so "the estimates recover the truth" means the optimiser found it rather
 than started on it.
 
-Each model contributes three things to the dashboard:
+Each model contributes the following to the dashboard, and they answer
+different questions in a deliberate order:
 
+- **Does the structure earn its place?** Recovery says estimation found the
+  parameters; it does not say they were worth having. Every model here
+  exists because of one feature that separates it from an obvious simpler
+  alternative — a second compartment, the resistance term, acting on
+  turnover rather than directly, the Weibull shape, the between-subject
+  variance. Each is switched off, everything else re-estimated, and the
+  increase in objective function is what that feature was buying. Where the
+  simpler model is nested the difference is a likelihood ratio statistic;
+  where it is a different structure with the same parameter count (direct
+  effect against indirect response) there is no p-value to quote and the
+  page says so. This is the question the page leads with, because it is the
+  one that decides whether a model should exist.
+- **Estimates**, each with a confidence interval, an %RSE, and — since the
+  data is simulated — the value it was generated from beside it.
+- **Shrinkage**, stated before the plots it qualifies. An empirical Bayes
+  estimate is a compromise between a subject's own data and the population,
+  so where a subject carries little information the estimate collapses
+  toward the population value. At high shrinkage the individual-prediction
+  panel looks excellent for the wrong reason.
 - **Goodness of fit** — observations against population and individual
   predictions, and conditional weighted residuals against time and against
   prediction, with a binned median so curvature is visible.
+- **Individual fits** for a sample of subjects spanning the range of the
+  data, because everything else on the page averages over exactly the thing
+  a mixed effects model exists to describe.
 - **A visual predictive check** from 500 replicates simulated from the
   fitted model, because goodness-of-fit plots can look tidy for a model that
   predicts the wrong spread.
-- **Estimates against the truth**, with a confidence interval on each. The
-  question is whether that interval contains the value the data was
-  simulated from — not whether the estimate is close, which depends as much
-  on how much information the design carries as on whether estimation
-  worked. At the moment 28 of 28 parameters clear it.
 
 The estimator is tested against independent methods rather than against
 itself: its marginal likelihood is checked against brute-force numerical
@@ -76,10 +93,8 @@ beside it in `<model>.truth.json`. Nothing here is patient data, and none is
 needed.
 
 Simulating rather than shipping a real dataset has a practical payoff: the
-true parameter values are known, so a run can be judged against the answer
-rather than only against itself. Goodness of fit cannot tell you whether
-estimation recovered the answer; nothing can, without a known answer to
-recover.
+true parameter values are known, so every estimate can be read beside the
+value it was trying to find.
 
 It also means the *design* is part of what the library has to get right, and
 in two places that is the whole lesson:

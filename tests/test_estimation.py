@@ -289,3 +289,67 @@ def test_recovery_rows_skip_a_parameter_with_no_standard_error():
     })
     rows = recovery_rows(est)
     assert list(rows["parameter"]) == ["ok"]
+
+
+# --- nested comparisons and shrinkage -------------------------------------
+
+def test_a_constrained_fit_cannot_beat_the_unconstrained_one():
+    """The invariant behind every comparison on the page.
+
+    Holding a parameter fixed removes a direction the optimiser could have
+    moved in, so the reduced model's objective function can only be equal
+    or worse. A negative delta would mean the full fit had not converged,
+    and the whole comparison section would be reporting optimiser noise as
+    evidence.
+    """
+    from nmlib.estimate import MODELS, NODES, fit_reduced
+
+    sim = simulate_tte_weibull(n_subjects=400, seed=31)
+    full = fit_model("tte_weibull", sim.data, sim.truth, verbose=False)
+    model = MODELS["tte_weibull"](sim.data, sim.truth)
+    reduced, df = fit_reduced(model, NODES["tte_weibull"], {1: 0.0})
+
+    assert df == 1
+    assert reduced >= full.objective - 1e-6
+
+
+def test_comparison_reports_a_nested_test_for_the_weibull_shape():
+    sim = simulate_tte_weibull(n_subjects=600, seed=32)
+    full = fit_model("tte_weibull", sim.data, sim.truth, verbose=False)
+    from nmlib.estimate import run_comparison
+    c = run_comparison("tte_weibull", sim.data, sim.truth, full.objective,
+                       verbose=False)
+    assert c["nested"] and c["df"] == 1
+    assert c["delta_ofv"] >= 0
+    assert 0.0 <= c["p_value"] <= 1.0
+
+
+def test_the_direct_effect_alternative_needs_no_solver():
+    """IDRDirect must be a closed form, and must differ from the full model."""
+    from nmlib.estimate import IDRDirect, IDRInhibition
+
+    sim = simulate_idr_inhibition(n_subjects=6, seed=33)
+    t = sim.truth
+    x = np.array([np.log(t["TVKIN"]), np.log(t["TVKOUT"]),
+                  np.log(t["TVIMAX"] / (1 - t["TVIMAX"])), np.log(t["TVIC50"]),
+                  np.log(0.3), np.log(0.5), np.log(0.1)])
+    etas = np.zeros((6, 2))
+
+    direct = IDRDirect(sim.data, t)._solve(x, etas)
+    indirect = IDRInhibition(sim.data, t)._solve(x, etas)
+    assert direct.shape == indirect.shape
+    # The direct model returns to baseline the moment the drug goes; the
+    # indirect one is still recovering. That difference is the whole point.
+    assert not np.allclose(direct, indirect, rtol=0.02)
+    assert np.all(np.isfinite(direct))
+
+
+def test_shrinkage_is_reported_for_every_random_effect():
+    sim = simulate_logistic(n_subjects=200, seed=34)
+    fit = fit_model("logistic_binary", sim.data, sim.truth, verbose=False)
+    shrink = fit.extra["shrinkage"]
+    assert set(shrink["eta"]) == {"logit"}
+    assert 0.0 <= shrink["eta"]["logit"] < 1.0
+    assert fit.etas is not None
+    assert list(fit.etas.columns) == ["ID", "logit"]
+    assert len(fit.etas) == sim.data["ID"].nunique()

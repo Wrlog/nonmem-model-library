@@ -39,7 +39,9 @@ For each model, into `fit/results/`:
 * `<key>_gof.csv` -- ID TIME DV PRED IPRED CWRES IWRES for the continuous
   models
 * `<key>_vpc.csv` -- replicates simulated from the estimates, for the VPC
-* `<key>_status.json` -- objective function, run time, method, convergence
+* `<key>_etas.csv` -- each subject's empirical Bayes random effects
+* `<key>_status.json` -- objective function, run time, method, convergence,
+  shrinkage, and the nested comparison against the simpler alternative
 
 Starting values are deliberately displaced from the truth (see `START_SCALE`)
 so that "the estimates recover the simulated values" means the optimiser
@@ -57,6 +59,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.special import expit, logit, roots_hermite
+from scipy.stats import chi2
 
 #: Quadrature nodes per random effect, per model. One node is Laplace.
 NODES = {
@@ -126,6 +129,8 @@ class PopModel:
     n_eta: int = 0
     #: Labels for the estimation-scale parameter vector, for debugging only.
     est_names: tuple[str, ...] = ()
+    #: Names of the random effects, in order, as the dashboard shows them.
+    eta_labels: tuple[str, ...] = ()
 
     def __init__(self, data: pd.DataFrame, truth: dict[str, float]):
         self.data = data
@@ -376,6 +381,7 @@ class PK2Cmt(PopModel):
 
     key = "pk_2cmt_iv"
     n_eta = 2
+    eta_labels = ("CL", "V1")
     est_names = ("log CL", "log V1", "log Q", "log V2",
                  "log sd(CL)", "log sd(V1)", "log prop")
 
@@ -391,6 +397,16 @@ class PK2Cmt(PopModel):
                    .to_numpy()[:, None])
         self.n_subj = len(self.ids)
         self.dose, self.interval, self.inf_dur, self.n_doses = 500.0, 24.0, 1.0, 3
+        # A proportional error model gives a prediction of zero infinite
+        # weight: the residual standard deviation goes to zero with the
+        # prediction, so one badly predicted point can dominate the whole
+        # likelihood and the information matrix comes back singular. Floor
+        # the error scale at a thousandth of the smallest observation. A
+        # model that predicts near zero where something was measured is then
+        # penalised heavily, which is right, instead of producing a number
+        # that cannot be computed -- which is what a one-compartment model
+        # fitted to two-compartment data does at the tail.
+        self.sd_floor = float(np.min(self.y)) * 1e-3
 
     def start(self):
         up, down = START_SCALE
@@ -420,11 +436,11 @@ class PK2Cmt(PopModel):
         return self._pk(x, etas)
 
     def residual_sd(self, x, ipred):
-        return _exp(x[6]) * np.maximum(ipred, 1e-10)
+        return _exp(x[6]) * np.maximum(ipred, self.sd_floor)
 
     def data_loglik(self, x, etas):
-        f = np.maximum(self._pk(x, etas), 1e-10)
-        sd = _exp(x[6]) * f
+        f = self._pk(x, etas)
+        sd = self.residual_sd(x, f)
         r = (self.y - f) / sd
         return -0.5 * np.sum(r * r + LOG2PI + 2 * np.log(sd), axis=-1)
 
@@ -460,6 +476,7 @@ class TGIClaret(PopModel):
 
     key = "tgi_claret"
     n_eta = 3
+    eta_labels = ("Y0", "KL", "KD")
     est_names = ("log Y0", "log KL", "log KD", "log LAMBDA",
                  "log sd(Y0)", "log sd(KL)", "log sd(KD)", "log prop")
 
@@ -552,6 +569,7 @@ class IDRInhibition(PopModel):
 
     key = "pkpd_idr_inhibition"
     n_eta = 2
+    eta_labels = ("KOUT", "IC50")
     est_names = ("log KIN", "log KOUT", "logit IMAX", "log IC50",
                  "log sd(KOUT)", "log sd(IC50)", "log prop")
 
@@ -735,6 +753,7 @@ class LogisticBinary(PopModel):
 
     key = "logistic_binary"
     n_eta = 1
+    eta_labels = ("logit",)
     est_names = ("BASE", "SLOPE", "log sd(eta)")
 
     def __init__(self, data, truth):
@@ -775,6 +794,132 @@ class LogisticBinary(PopModel):
             Report("SLOPE, logit per unit exposure", "SLOPE", "per unit"),
             Report("IIV on the logit", "IIV_SD", "SD"),
         ]
+
+
+class PK1Cmt(PK2Cmt):
+    """The obvious simpler alternative: one compartment, no distribution phase.
+
+        C(t) = sum over doses of (dose/(V*T)) * (1 - exp(-ke*t_in))
+                                              * exp(-ke*t_after)
+
+    Written out as its own closed form rather than obtained by driving Q
+    towards zero in the two-compartment model. That limit is numerically
+    degenerate -- beta goes to zero while b/beta goes to infinity, and the
+    two cancel only in exact arithmetic -- so the objective function comes
+    back as garbage rather than as a worse fit. A comparison is only worth
+    reporting if the reduced model was actually fitted.
+
+    Q and V2 keep their slots in the parameter vector and are held fixed,
+    since nothing here reads them; the comparison gives up two parameters.
+    """
+
+    key = "pk_1cmt_iv"
+
+    def _pk(self, x, etas):
+        cl = _exp(x[0] + etas[..., 0]) * (self.wt[:, 0] / 70) ** 0.75
+        v = _exp(x[1] + etas[..., 1]) * (self.wt[:, 0] / 70)
+        ke = (cl / v)[..., None]
+        rate = self.dose / self.inf_dur
+
+        out = np.zeros(np.broadcast_shapes(ke.shape, self.times.shape))
+        for i in range(self.n_doses):
+            u = self.times - i * self.interval
+            on = u >= 0
+            uu = np.where(on, u, 0.0)
+            during = np.minimum(uu, self.inf_dur)
+            after = uu - during
+            c = (rate / (v[..., None] * ke)) * (1 - _exp(-ke * during)) \
+                * _exp(-ke * after)
+            out = out + np.where(on, c, 0.0)
+        return out
+
+
+class IDRDirect(IDRInhibition):
+    """The obvious simpler alternative: the drug acts on the biomarker itself.
+
+        R(t) = R0 * (1 - IMAX*C(t)/(IC50 + C(t)))
+
+    No turnover, so the response is a function of the concentration *now*
+    and nothing else: it falls the moment the drug arrives and returns the
+    moment it leaves. That is the whole difference from the indirect model,
+    and comparing the two on the same data is what shows whether the
+    turnover structure is earning the parameter it costs. KOUT survives only
+    as the thing that sets the baseline, R0 = KIN/KOUT.
+
+    It needs no solver at all, which makes the comparison nearly free.
+    """
+
+    key = "pkpd_idr_direct"
+
+    def _solve(self, x, etas):
+        kin = _exp(x[0])
+        kout = _exp(x[1] + etas[..., 0])
+        imax = expit(x[2])
+        ic50 = _exp(x[3] + etas[..., 1])[..., None]
+        # Concentration at each observation time, same PK as the full model.
+        elapsed = self.times[:, None] - self.dose_times[None, :]
+        shape = np.sum(np.where(elapsed >= 0, _exp(-self.ke * elapsed), 0.0),
+                       axis=1)
+        c = self.c0[:, None] * shape
+        return (kin / kout)[..., None] * (1 - imax * c / (ic50 + c))
+
+
+#: The one feature that separates each model from the obvious simpler
+#: alternative, and how to switch that feature off. `fix` maps an index in
+#: the estimation-scale parameter vector to the value that disables it;
+#: everything else is re-estimated, so the comparison is between two fitted
+#: models rather than between a fit and a guess.
+#:
+#: `boundary` marks a test where the null sits on the edge of the parameter
+#: space -- a rate or a variance held at zero. The chi-square reference
+#: distribution is conservative there (the true null is a mixture), so the
+#: real p-value is smaller than the one reported and the conclusion only
+#: gets stronger.
+COMPARISONS = {
+    "pk_2cmt_iv": {
+        "feature": "The second compartment",
+        "against": "a one-compartment model",
+        "question": "Does the distribution phase exist, or would one "
+                    "compartment describe these data just as well?",
+        "alternative": PK1Cmt,
+        "fix": {2: 0.0, 3: 0.0},                  # Q and V2 unused there
+        "df": 2,
+        "boundary": True,
+    },
+    "tgi_claret": {
+        "feature": "The resistance term LAMBDA",
+        "against": "a plain kill model, with no loss of drug effect",
+        "question": "Without it the model cannot regrow a tumour while "
+                    "treatment continues. Is that shape actually in the data?",
+        "fix": {3: float(np.log(1e-8))},          # LAMBDA -> 0
+        "boundary": True,
+    },
+    "pkpd_idr_inhibition": {
+        "feature": "Acting on turnover rather than on the biomarker",
+        "against": "a direct effect model",
+        "question": "A direct model has the response track the concentration "
+                    "exactly. Does the lag earn the extra structure?",
+        "alternative": IDRDirect,
+        "df": 0,                                   # same parameter count
+        "boundary": False,
+    },
+    "tte_weibull": {
+        "feature": "The Weibull shape parameter",
+        "against": "a constant hazard (exponential)",
+        "question": "Does the hazard change with time, or is a single rate "
+                    "enough?",
+        "fix": {1: 0.0},                           # SHAPE -> 1
+        "boundary": False,
+    },
+    "logistic_binary": {
+        "feature": "Between-subject variability on the logit",
+        "against": "plain logistic regression, every subject alike",
+        "question": "Six visits per subject is what makes this estimable. "
+                    "Is there really variation between subjects to find?",
+        "fix": {2: float(np.log(0.02))},           # OMEGA -> ~0
+        "boundary": True,
+    },
+}
 
 
 MODELS: dict[str, type[PopModel]] = {
@@ -819,6 +964,7 @@ class FitResult:
     estimates: pd.DataFrame
     gof: pd.DataFrame | None = None
     vpc: pd.DataFrame | None = None
+    etas: pd.DataFrame | None = None
     extra: dict = field(default_factory=dict)
 
 
@@ -850,14 +996,23 @@ def _jacobian(fn, x: np.ndarray, rel: float = 1e-5) -> np.ndarray:
     return np.stack(cols, axis=1)
 
 
-def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
-              nodes: int | None = None, seed: int = 20240,
-              verbose: bool = True) -> FitResult:
-    """Estimate one model and produce everything the dashboard shows for it."""
-    started = time.perf_counter()
-    model = MODELS[key](data, truth)
-    n_nodes = NODES[key] if nodes is None else nodes
+def _optimise(objective, x0: np.ndarray, box: list[tuple[float, float]]):
+    """Simplex into the right basin, then a quasi-Newton step to finish.
 
+    The start is deliberately poor and the first few hundred units of
+    objective function are where a gradient method is least reliable, so
+    Nelder-Mead goes first; the quadrature makes the surface smooth enough
+    for L-BFGS-B to sharpen the answer afterwards.
+    """
+    coarse = minimize(objective, x0, method="Nelder-Mead", bounds=box,
+                      options={"maxiter": 400 * max(len(x0), 1),
+                               "xatol": 1e-4, "fatol": 1e-4, "adaptive": True})
+    fine = minimize(objective, coarse.x, method="L-BFGS-B", bounds=box,
+                    options={"maxiter": 500, "ftol": 1e-12, "gtol": 1e-8})
+    return fine if fine.fun <= coarse.fun else coarse
+
+
+def _objective_for(model: PopModel, n_nodes: int):
     def objective(x):
         try:
             value = -2.0 * marginal_loglik(model, np.asarray(x, dtype=float),
@@ -866,18 +1021,46 @@ def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
             return 1e12
         return value if np.isfinite(value) else 1e12
 
+    return objective
+
+
+def fit_reduced(model: PopModel, n_nodes: int,
+                fixed: dict[int, float]) -> tuple[float, int]:
+    """Refit with some parameters held, and return the objective and the df.
+
+    Used for the nested comparisons: holding a parameter at the value that
+    switches a feature off, refitting everything else, and reading how much
+    worse the fit gets is what says whether that feature was paying for
+    itself. Only the objective is needed, so no standard errors are
+    computed and the run is cheap.
+    """
+    full_objective = _objective_for(model, n_nodes)
     x0 = model.start()
+    free = [i for i in range(len(x0)) if i not in fixed]
+
+    def expand(xf: np.ndarray) -> np.ndarray:
+        x = np.asarray(x0, dtype=float).copy()
+        for i, value in fixed.items():
+            x[i] = value
+        x[free] = xf
+        return x
+
     box = model.bounds()
-    # Nelder-Mead first, to get into the right basin from a deliberately poor
-    # start, then a gradient method to finish: the quadrature makes the
-    # objective smooth enough for a quasi-Newton step, but the simplex is
-    # what survives the first few hundred units of objective function.
-    coarse = minimize(objective, x0, method="Nelder-Mead", bounds=box,
-                      options={"maxiter": 400 * len(x0), "xatol": 1e-4,
-                               "fatol": 1e-4, "adaptive": True})
-    fine = minimize(objective, coarse.x, method="L-BFGS-B", bounds=box,
-                    options={"maxiter": 500, "ftol": 1e-12, "gtol": 1e-8})
-    best = fine if fine.fun <= coarse.fun else coarse
+    result = _optimise(lambda xf: full_objective(expand(xf)),
+                       np.asarray(x0)[free], [box[i] for i in free])
+    return float(full_objective(expand(np.asarray(result.x)))), len(fixed)
+
+
+def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
+              nodes: int | None = None, seed: int = 20240,
+              verbose: bool = True) -> FitResult:
+    """Estimate one model and produce everything the dashboard shows for it."""
+    started = time.perf_counter()
+    model = MODELS[key](data, truth)
+    n_nodes = NODES[key] if nodes is None else nodes
+    objective = _objective_for(model, n_nodes)
+
+    best = _optimise(objective, model.start(), model.bounds())
     x = np.asarray(best.x, dtype=float)
     ofv = float(objective(x))
 
@@ -913,6 +1096,7 @@ def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
 
     gof = _gof_table(model, x)
     vpc = _vpc_table(model, x, seed)
+    etas, shrinkage = _etas_and_shrinkage(model, x, gof)
     seconds = round(time.perf_counter() - started, 1)
 
     if verbose:
@@ -923,10 +1107,52 @@ def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
 
     return FitResult(
         key=key, objective=ofv, seconds=seconds, nodes=n_nodes,
-        converged=bool(best.success or fine.success), message=str(best.message),
-        estimates=estimates, gof=gof, vpc=vpc,
-        extra={"subjects": int(model.n_subj), "eta": model.n_eta},
+        converged=bool(best.success), message=str(best.message),
+        estimates=estimates, gof=gof, vpc=vpc, etas=etas,
+        extra={"subjects": int(model.n_subj), "eta": model.n_eta,
+               "shrinkage": shrinkage},
     )
+
+
+def _etas_and_shrinkage(model: PopModel, x: np.ndarray,
+                        gof: pd.DataFrame | None):
+    """Each subject's estimated random effects, and how much they shrank.
+
+    Shrinkage is the number that says whether the individual-level
+    diagnostics on this page mean anything. An empirical Bayes estimate is a
+    compromise between what a subject's own data says and what the
+    population says, and when a subject carries little information the
+    compromise lands near the population value: the estimated etas end up
+    with less spread than the OMEGA they were drawn from. At high shrinkage
+    the "observed against individual prediction" panel looks excellent for
+    the wrong reason -- the individual predictions have quietly become
+    population predictions -- and etas can no longer be trusted for spotting
+    covariate relationships.
+
+        eta shrinkage = 1 - SD(estimated etas) / OMEGA
+        epsilon shrinkage = 1 - SD(IWRES)
+    """
+    if model.n_eta == 0:
+        return None, {}
+
+    eta_hat, _ = _mode_and_curvature(
+        model, x, model._warm if model._warm is not None
+        else np.zeros((model.n_subj, model.n_eta)))
+    omega = model.omega_sd(x)
+    eta_sh = [float(1.0 - np.std(eta_hat[:, j], ddof=1) / omega[j])
+              for j in range(model.n_eta)]
+
+    labels = model.eta_labels or tuple(
+        f"ETA({j + 1})" for j in range(model.n_eta))
+    frame = pd.DataFrame(eta_hat, columns=list(labels))
+    frame.insert(0, "ID", model.ids)
+
+    shrinkage = {"eta": dict(zip(labels, [round(v, 4) for v in eta_sh],
+                                 strict=True))}
+    if gof is not None and "IWRES" in gof:
+        iwres = pd.to_numeric(gof["IWRES"], errors="coerce").dropna()
+        shrinkage["epsilon"] = round(float(1.0 - iwres.std(ddof=1)), 4)
+    return frame, shrinkage
 
 
 def _gof_table(model: PopModel, x: np.ndarray) -> pd.DataFrame | None:
@@ -1008,6 +1234,58 @@ def _vpc_table(model: PopModel, x: np.ndarray, seed: int,
     })
 
 
+def run_comparison(key: str, data: pd.DataFrame, truth: dict[str, float],
+                   full_ofv: float, verbose: bool = True) -> dict | None:
+    """Refit the model with its distinguishing feature switched off.
+
+    Two shapes of comparison come out of this, and they are not the same
+    test. Where the simpler model is the full one with a parameter held at
+    a fixed value, the models are nested and the difference in objective
+    function is a likelihood ratio statistic with a chi-square reference.
+    Where the simpler model is a different structure with the same number
+    of parameters -- direct effect against indirect response -- nothing is
+    nested and there is no p-value to quote; the objective functions are
+    simply comparable, and the lower one describes the data better.
+    """
+    spec = COMPARISONS.get(key)
+    if spec is None:
+        return None
+
+    started = time.perf_counter()
+    n_nodes = NODES[key]
+    model = spec.get("alternative", MODELS[key])(data, truth)
+    fixed = spec.get("fix")
+    if fixed:
+        reduced_ofv, n_fixed = fit_reduced(model, n_nodes, fixed)
+    else:
+        reduced_ofv = float(_optimise(_objective_for(model, n_nodes),
+                                      model.start(), model.bounds()).fun)
+        n_fixed = 0
+    df = int(spec["df"]) if "df" in spec else n_fixed
+
+    delta = reduced_ofv - full_ofv
+    p_value = float(chi2.sf(delta, df)) if df > 0 and delta > 0 else None
+    out = {
+        "feature": spec["feature"],
+        "against": spec["against"],
+        "question": spec["question"],
+        "full_ofv": round(full_ofv, 2),
+        "reduced_ofv": round(reduced_ofv, 2),
+        "delta_ofv": round(delta, 2),
+        "df": df,
+        "p_value": p_value,
+        "boundary": bool(spec.get("boundary", False)),
+        "nested": df > 0,
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+    if verbose:
+        tail = (f"p = {p_value:.2g}" if p_value is not None
+                else "not nested, compare objective functions directly")
+        print(f"    without {spec['feature'].lower()}: "
+              f"dOFV {delta:+.1f} on {df} df, {tail}")
+    return out
+
+
 def fit_all(root: Path, keys: list[str] | None = None,
             verbose: bool = True) -> dict[str, FitResult]:
     """Fit every model and write the artefacts the dashboard reads."""
@@ -1028,6 +1306,11 @@ def fit_all(root: Path, keys: list[str] | None = None,
             result.gof.to_csv(out_dir / f"{key}_gof.csv", index=False)
         if result.vpc is not None:
             result.vpc.to_csv(out_dir / f"{key}_vpc.csv", index=False)
+        if result.etas is not None:
+            result.etas.to_csv(out_dir / f"{key}_etas.csv", index=False)
+
+        comparison = run_comparison(key, data, truth, result.objective,
+                                    verbose=verbose)
         (out_dir / f"{key}_status.json").write_text(json.dumps({
             "model": key,
             "objective": result.objective,
@@ -1037,6 +1320,7 @@ def fit_all(root: Path, keys: list[str] | None = None,
             "message": result.message,
             "method": _method_name(result.nodes, result.extra["eta"]),
             "engine": "nmlib.estimate",
+            "comparison": comparison,
             **result.extra,
         }, indent=2), encoding="utf-8")
 

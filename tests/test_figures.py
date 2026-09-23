@@ -89,20 +89,6 @@ def test_diagnostic_figures_contain_their_data(model, theme, repo_root):
         assert ink > INK_FLOOR, f"{key} VPC ({theme.name}) is empty: {ink:.4%}"
 
 
-@pytest.mark.parametrize("theme", THEMES, ids=lambda t: t.name)
-def test_recovery_figure_contains_its_data(theme, repo_root):
-    results = repo_root / "fit" / "results"
-    per_model = {}
-    for m in CATALOGUE:
-        fit = diagnostics.load_fit(results, m["key"])
-        if fit:
-            per_model[m["key"]] = (m["title"], fit["estimates"])
-    if not per_model:
-        pytest.skip("nothing has been fitted in this tree")
-    ink = coloured_fraction(diagnostics.recovery_plot(per_model, theme))
-    assert ink > INK_FLOOR
-
-
 def test_a_log_axis_padded_the_old_way_is_detected_as_empty(repo_root):
     """The detector must be able to fail, on the bug it exists for.
 

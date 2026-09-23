@@ -4,7 +4,7 @@ These read what `nmlib.estimate` wrote into `fit/results/` and draw it with
 the same theme as everything else, so a diagnostic plot and a data plot in
 this library look like they came from the same place.
 
-The three answer different questions, and the order matters:
+They answer different questions, and the order matters:
 
 * **Goodness of fit** asks whether the model describes the data it was
   fitted to. It is necessary and it is weak: a model can pass all four
@@ -13,11 +13,9 @@ The three answer different questions, and the order matters:
   fitted model looks like the data that was observed -- not just in the
   middle, but in the spread. Goodness of fit plots can look tidy for a
   model that predicts the wrong variability; a VPC cannot.
-* **Recovery** asks whether estimation found the parameters the data was
-  simulated from. Nothing in the first two can answer that, and it is the
-  only one of the three that needs a simulated dataset to be askable at
-  all. It is the reason this library simulates rather than shipping a real
-  dataset.
+* **Individual fits** ask whether it holds for single subjects rather than
+  only on average, which is the thing a mixed effects model exists to
+  describe and the thing every population-level plot averages away.
 """
 
 from __future__ import annotations
@@ -31,6 +29,8 @@ import pandas as pd
 from .theme import (
     SIZE_LABEL,
     SIZE_NOTE,
+    SIZE_SUBTITLE,
+    SIZE_TITLE,
     Theme,
     finish,
     legend,
@@ -47,10 +47,10 @@ def load_fit(results_dir: Path, key: str) -> dict | None:
     if not est.exists():
         return None
     out: dict = {"estimates": pd.read_csv(est)}
-    for name, attr in (("gof", "gof"), ("vpc", "vpc")):
+    for name in ("gof", "vpc", "etas"):
         path = results_dir / f"{key}_{name}.csv"
         if path.exists():
-            out[attr] = pd.read_csv(path)
+            out[name] = pd.read_csv(path)
     status = results_dir / f"{key}_status.json"
     if status.exists():
         out["status"] = json.loads(status.read_text(encoding="utf-8"))
@@ -260,84 +260,146 @@ def recovery_rows(estimates: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def recovery_plot(per_model: dict[str, tuple[str, pd.DataFrame]],
-                  theme: Theme) -> bytes:
-    """Every estimated parameter in the library against the value behind it.
+# --------------------------------------------------------------------------
+# Individual fits
+# --------------------------------------------------------------------------
 
-    This is the figure the rest of the library exists to make possible.
-    Goodness of fit and a predictive check both ask whether the model
-    agrees with the data; only a simulated dataset lets you ask whether
-    estimation recovered the answer, and that is a different question with
-    a different failure mode.
+def individual_fits(fit: dict, theme: Theme, log_scale: bool = False,
+                    n_subjects: int = 8, y_label: str = "Observation",
+                    x_label: str = "Time") -> bytes | None:
+    """A sample of subjects, each with their own fit drawn through their data.
 
-    The mark is the estimate divided by the value the data was simulated
-    from, so one is the target for every row whatever its units, with the
-    95% confidence interval as a whisker. Whether that whisker crosses one
-    is the test; the distance from one is only how far off this particular
-    dataset landed, and a tight interval sitting slightly off one is a
-    better result than a wide interval centred on it.
+    Population-level plots average over exactly the thing a mixed effects
+    model exists to describe. This is the panel that shows whether the
+    structure holds for individual people rather than only on average, and
+    it is where a model that is wrong in a way the averages hide -- a shape
+    it cannot bend to, a subject it cannot reach -- shows it.
+
+    The subjects are chosen at even quantiles of their own median
+    observation, so the panel spans the range of the data instead of
+    showing eight typical subjects.
     """
-    blocks = []
-    for key, (title, est) in per_model.items():
-        rows = recovery_rows(est)
-        if not rows.empty:
-            blocks.append((key, title, rows))
+    d = fit.get("gof")
+    if d is None or d.empty:
+        return None
 
-    n_rows = sum(len(r) for _, _, r in blocks)
-    height = 1.4 + 0.27 * n_rows + 0.30 * len(blocks)
-    fig, ax = panel(theme, width=8.4, height=height)
+    order = d.groupby("ID")["DV"].median().sort_values()
+    if len(order) == 0:
+        return None
+    picks = order.index[
+        np.unique(np.linspace(0, len(order) - 1, n_subjects).astype(int))]
+
+    ncols = 4
+    nrows = int(np.ceil(len(picks) / ncols))
+    fig, axes = panel(theme, nrows=nrows, ncols=ncols, width=8.4,
+                      height=2.05 * nrows + 0.8, sharex=True)
+    flat = axes.ravel()
+
+    for ax, subject in zip(flat, picks, strict=False):
+        g = d[d["ID"] == subject].sort_values("TIME")
+        ax.plot(g["TIME"], g["PRED"], color=theme.ink_3, linewidth=1.3,
+                linestyle=(0, (4, 3)), zorder=2, label="Population")
+        ax.plot(g["TIME"], g["IPRED"], color=theme.series[0], linewidth=1.8,
+                zorder=3, solid_capstyle="round", label="Individual")
+        ax.scatter(g["TIME"], g["DV"], s=17, color=theme.ink,
+                   edgecolors=theme.surface, linewidths=1.0, zorder=4,
+                   label="Observed")
+        if log_scale:
+            ax.set_yscale("log")
+            plain_log_ticks(ax)
+        ax.set_title(f"Subject {int(subject)}", fontsize=SIZE_NOTE,
+                     loc="left", color=theme.ink_3, pad=4)
+
+    for ax in flat[len(picks):]:
+        ax.set_visible(False)
+    for ax in flat[:len(picks)][-ncols:]:
+        ax.set_xlabel(x_label)
+    for row in range(nrows):
+        flat[row * ncols].set_ylabel(y_label)
+
+    handles, labels_ = flat[0].get_legend_handles_labels()
+    leg = fig.legend(handles, labels_, frameon=False, ncol=3,
+                     loc="upper center", bbox_to_anchor=(0.5, 0.055),
+                     fontsize=SIZE_LABEL)
+    for text in leg.get_texts():
+        text.set_color(theme.ink_2)
+
+    # Both lines are placed explicitly. suptitle positions itself relative to
+    # the axes, which puts it on top of a subtitle drawn in figure
+    # coordinates.
+    fig.text(0.0, 1.0, f"{len(picks)} subjects, spanning the range of the data",
+             ha="left", va="top", fontsize=SIZE_TITLE, color=theme.ink,
+             fontweight="600")
+    fig.text(0.0, 0.962,
+             "Dashed is the population prediction, solid the individual fit; "
+             "the gap between them is that subject's random effects",
+             ha="left", va="top", fontsize=SIZE_SUBTITLE, color=theme.ink_3)
+    fig.tight_layout(rect=(0, 0.07, 1, 0.925), h_pad=1.9, w_pad=1.4)
+    return finish(fig)
+
+
+# --------------------------------------------------------------------------
+# Does the distinguishing feature earn its place?
+# --------------------------------------------------------------------------
+
+#: Change in objective function at p = 0.05 for one and two parameters.
+CHI2_95 = {1: 3.84, 2: 5.99, 3: 7.81}
+
+
+def comparison_plot(rows: list[dict], theme: Theme) -> bytes | None:
+    """How much worse the simpler model fits, for every model in the library.
+
+    Each bar is the increase in objective function when that model's
+    distinguishing feature is switched off and everything else is
+    re-estimated. The marker is the 95% threshold for the number of
+    parameters given up, so a bar reaching past it is a feature that pays
+    for itself on this data.
+
+    The scale is logarithmic because the answers are not remotely the same
+    size, and that is itself the finding: the tumour model's resistance
+    term is not a marginal improvement, it is the difference between a
+    model that can bend the way the data bends and one that cannot.
+    """
+    rows = [r for r in rows if r and r.get("delta_ofv") is not None]
+    if not rows:
+        return None
+
+    fig, ax = panel(theme, width=8.4, height=0.72 * len(rows) + 2.0)
     style_axes(ax, theme, xgrid=True, ygrid=False)
 
-    y = 0.0
-    ticks, labels, group_marks = [], [], []
-    for _, title, rows in reversed(blocks):
-        group_start = y
-        for _, r in rows.iloc[::-1].iterrows():
-            covered = bool(r["covers"])
-            colour = theme.series[0] if covered else theme.warning
-            if np.isfinite(r["lo"]) and np.isfinite(r["hi"]):
-                ax.plot([r["lo"], r["hi"]], [y, y], color=colour, linewidth=1.6,
-                        alpha=0.75, solid_capstyle="round", zorder=3)
-            ax.scatter([r["ratio"]], [y], s=34, color=colour, zorder=4,
-                       edgecolors=theme.surface, linewidths=1.4)
-            if not covered:
-                # A status colour never carries meaning on its own.
-                ax.annotate("! interval excludes the simulated value",
-                            xy=(r["hi"], y), xytext=(8, 0),
-                            textcoords="offset points", va="center",
-                            fontsize=SIZE_NOTE, color=theme.warning)
-            ticks.append(y)
-            labels.append(str(r["parameter"]))
-            y += 1.0
-        group_marks.append((group_start - 0.55, y - 1.0, title))
-        y += 1.5
+    ys = np.arange(len(rows))[::-1]
+    for y, r in zip(ys, rows, strict=True):
+        delta = max(float(r["delta_ofv"]), 0.01)
+        threshold = CHI2_95.get(int(r["df"] or 0))
+        beats = threshold is not None and delta > threshold
+        colour = theme.series[0] if (beats or not r["nested"]) else theme.warning
+        ax.plot([0.01, delta], [y, y], color=colour, linewidth=3.0,
+                solid_capstyle="round", alpha=0.85, zorder=3)
+        ax.scatter([delta], [y], s=40, color=colour, zorder=4,
+                   edgecolors=theme.surface, linewidths=1.4)
+        label = f"+{delta:.0f}"
+        if r["nested"] and r.get("p_value") is not None:
+            label += f"   p {'<' if r['p_value'] < 1e-4 else '='} " + (
+                "0.0001" if r["p_value"] < 1e-4 else f"{r['p_value']:.3g}")
+        else:
+            label += "   same parameter count, so no p-value"
+        ax.annotate(label, xy=(delta, y), xytext=(10, 0),
+                    textcoords="offset points", va="center",
+                    fontsize=SIZE_NOTE, color=theme.ink_2)
+        if threshold is not None:
+            ax.scatter([threshold], [y], marker="|", s=150,
+                       color=theme.ink_3, zorder=5, linewidths=1.4)
 
-    ax.axvline(1.0, color=theme.ink_3, linewidth=1.2, zorder=2)
-    for lo, hi, title in group_marks:
-        ax.annotate(title, xy=(0, hi + 0.62), xycoords=("axes fraction", "data"),
-                    xytext=(2, 0), textcoords="offset points", ha="left",
-                    va="center", fontsize=SIZE_LABEL, color=theme.ink,
-                    fontweight="600")
-        ax.axhline(lo, color=theme.grid, linewidth=0.8, zorder=1)
-
-    ax.set_yticks(ticks)
-    ax.set_yticklabels(labels, fontsize=SIZE_NOTE)
-    ax.set_ylim(-1.0, y + 0.1)
+    ax.set_yticks(ys)
+    ax.set_yticklabels([r["feature"] for r in rows], fontsize=SIZE_LABEL)
     ax.set_xscale("log")
-    # Fixed ticks on a log axis, and matplotlib's minor decade labels turned
-    # off -- left on, they put a stray "6 x 10^-1" among the "0.67x" labels.
-    ax.set_xticks([0.5, 0.67, 0.8, 1.0, 1.25, 1.5, 2.0])
-    ax.set_xticklabels(["0.5x", "0.67x", "0.8x", "1x", "1.25x", "1.5x", "2x"])
-    ax.minorticks_off()
-    spread = np.concatenate([r[["lo", "hi", "ratio"]].to_numpy().ravel()
-                             for _, _, r in blocks])
-    spread = spread[np.isfinite(spread) & (spread > 0)]
-    ax.set_xlim(min(0.62, float(spread.min()) * 0.92),
-                max(1.6, float(spread.max()) * 1.08))
-    ax.set_xlabel("Estimate divided by the value the data was simulated from")
-    covered = sum(int(r["covers"].sum()) for _, _, r in blocks)
-    title_block(ax, theme, f"{covered} of {n_rows} parameters recovered",
-                "Each estimate divided by the value its data was simulated "
-                "from, with a 95% confidence interval")
+    ax.set_xlim(0.8, max(float(r["delta_ofv"]) for r in rows) * 9)
+    plain_log_ticks(ax, "x")
+    ax.set_xlabel("Increase in objective function without the feature "
+                  "(log scale)")
+    ax.set_ylim(-0.8, len(rows) - 0.2)
+    title_block(ax, theme, "Does each model's distinguishing feature earn it?",
+                "Bar is the cost of dropping it; the tick is the 95% "
+                "threshold for the parameters given up")
     fig.tight_layout()
     return finish(fig)

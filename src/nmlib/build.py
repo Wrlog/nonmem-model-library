@@ -369,6 +369,83 @@ def _estimates_table(est: pd.DataFrame) -> str:
             f"<tbody>{''.join(rows)}</tbody></table>")
 
 
+def _shrinkage_block(status: dict) -> str:
+    """Shrinkage, stated before the plots it qualifies.
+
+    It belongs here rather than in a footnote: the panel immediately below
+    is "observed against individual prediction", and shrinkage is the
+    number that says how much of that agreement is the model fitting each
+    subject and how much is each subject's estimate having been pulled back
+    to the population.
+    """
+    shrink = (status or {}).get("shrinkage") or {}
+    eta = shrink.get("eta") or {}
+    if not eta:
+        return ""
+
+    worst_name, worst = max(eta.items(), key=lambda kv: kv[1])
+    parts = ", ".join(f"{name} {value * 100:.0f}%"
+                      for name, value in eta.items())
+    eps = shrink.get("epsilon")
+    eps_txt = (f" Residual (epsilon) shrinkage is {eps * 100:.0f}%."
+               if eps is not None else "")
+
+    if worst < 0.20:
+        reading = ("All low, so the individual predictions below are "
+                   "genuinely individual and the etas can be trusted for "
+                   "spotting covariate relationships.")
+    elif worst < 0.35:
+        reading = (f"{html.escape(worst_name)} is the one to watch; the rest "
+                   "carry enough subject-level information to be read "
+                   "directly.")
+    else:
+        reading = (
+            f"{html.escape(worst_name)} is high enough to matter: those "
+            "estimates have been pulled a long way back towards the "
+            "population, so the individual-prediction panel below flatters "
+            "that parameter, and an eta-versus-covariate plot on it would "
+            "be close to meaningless.")
+
+    return (f'<p class="status"><b>Shrinkage</b> &mdash; {parts}.{eps_txt} '
+            "Empirical Bayes estimates are a compromise between a subject's "
+            "own data and the population, so where a subject carries little "
+            "information the estimate collapses toward the population value "
+            f"and the spread of the etas understates OMEGA. {reading}</p>")
+
+
+def _comparison_block(status: dict) -> str:
+    """The nested comparison for one model."""
+    c = (status or {}).get("comparison")
+    if not c:
+        return ""
+    if c["nested"]:
+        p = c.get("p_value")
+        verdict = (
+            f'dropping it costs <b>{c["delta_ofv"]:.1f}</b> objective function '
+            f'on {c["df"]} degree{"s" if c["df"] != 1 else ""} of freedom'
+            + (f", p {'<' if p is not None and p < 1e-4 else '='} "
+               + ("0.0001" if p is not None and p < 1e-4
+                  else (f"{p:.3g}" if p is not None else "n/a"))
+               if p is not None else ""))
+        caveat = (" The null sits on the edge of the parameter space here, "
+                  "so the chi-square reference is conservative and the real "
+                  "p-value is smaller than the one quoted."
+                  if c.get("boundary") else "")
+    else:
+        better = "better" if c["delta_ofv"] > 0 else "worse"
+        verdict = (f'the two have the same number of parameters, and the full '
+                   f'model fits <b>{abs(c["delta_ofv"]):.1f}</b> objective '
+                   f'function {better}')
+        caveat = (" Nothing is nested, so there is no likelihood ratio test "
+                  "to run; the objective functions are simply comparable.")
+
+    return (
+        "<h3>Does the structure earn its place?</h3>"
+        f'<p class="why">{html.escape(c["question"])}</p>'
+        f'<p class="status">Refitting as <b>{html.escape(c["against"])}</b> '
+        f'and re-estimating everything else: {verdict}.{caveat}</p>')
+
+
 def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
     key = m["key"]
     df = pd.read_csv(root / "data" / f"{key}.csv")
@@ -417,14 +494,29 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
                 "that applies instead &mdash; observed outcomes grouped by "
                 "exposure, against what the model says they should be.</p>")
 
+        body.append(_comparison_block(st))
+
         if "gof" in fit:
             body.append("<h3>Goodness of fit</h3>")
+            body.append(_shrinkage_block(st))
             body.append(_fig_pair(
                 diagnostics.gof_panel(fit, LIGHT, bool(m.get("log"))),
                 diagnostics.gof_panel(fit, DARK, bool(m.get("log"))),
                 "Goodness of fit",
                 "The dashed line is unity; the orange line is a binned median "
                 "of the residuals, which should sit on zero."))
+
+            ind_l = diagnostics.individual_fits(
+                fit, LIGHT, log_scale=bool(m.get("log")),
+                y_label=m["y_label"], x_label=m["x_label"])
+            ind_d = diagnostics.individual_fits(
+                fit, DARK, log_scale=bool(m.get("log")),
+                y_label=m["y_label"], x_label=m["x_label"])
+            if ind_l and ind_d:
+                body.append(_fig_pair(
+                    ind_l, ind_d, "Individual fits",
+                    "Everything above averages over subjects. This is where a "
+                    "model that is wrong in a way the averages hide shows it."))
 
         vpc_l = diagnostics.vpc_plot(fit, df, LIGHT, log_scale=bool(m.get("log")),
                                      y_label=m["y_label"], x_label=m["x_label"])
@@ -476,8 +568,8 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
   <p class="lede">Control streams for the model types that come up repeatedly
   in drug development &mdash; population PK, tumour growth inhibition,
   indirect response, time to event and a binary exposure&ndash;response. Each
-  comes with a simulated dataset, the parameters it was generated from, and
-  an estimation run that tries to get those parameters back.</p>
+  one is fitted here, diagnosed, and tested against the simpler model it
+  would have to beat to be worth writing.</p>
 </header>"""]
 
     tabs = ['<button class="tab" data-target="all" aria-pressed="true">'
@@ -492,48 +584,52 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
 
     # --- the scoreboard ---------------------------------------------------
     n_pass = sum(1 for c in checks.values() if c.ok)
-    per_model, covered, total, seconds = {}, 0, 0, 0.0
+    seconds = sum(float((f or {}).get("status", {}).get("seconds", 0) or 0)
+                  for f in fits.values())
+
+    comparisons = []
     for m in CATALOGUE:
         f = fits[m["key"]]
-        if not f:
-            continue
-        per_model[m["key"]] = (m["title"], f["estimates"])
-        rec = diagnostics.recovery_rows(f["estimates"])
-        covered += int(rec["covers"].sum())
-        total += len(rec)
-        seconds += float(f.get("status", {}).get("seconds", 0) or 0)
+        c = (f or {}).get("status", {}).get("comparison")
+        if c:
+            comparisons.append(c)
+    earned = sum(1 for c in comparisons
+                 if (c["nested"] and c["delta_ofv"]
+                     > diagnostics.CHI2_95.get(int(c["df"]), 3.84))
+                 or (not c["nested"] and c["delta_ofv"] > 0))
 
     tiles = [
         _tile(str(len(fitted)), "models estimated from their own data",
               f"of {len(CATALOGUE)}"),
-        _tile(str(covered), "parameters whose 95% interval covers the "
-                            "simulated value", f"of {total}"),
+        _tile(str(earned), "models whose distinguishing feature pays for "
+                           "itself", f"of {len(comparisons)}"),
         _tile(str(n_pass), "control streams passing every static check",
               f"of {len(checks)}"),
         _tile(f"{seconds / 60:.0f} min", "to fit the whole library, on one core"),
     ]
     parts.append('<div class="tiles">' + "".join(tiles) + "</div>")
 
-    if per_model:
+    if comparisons:
         parts.append('<section class="card">')
-        parts.append("<h2>Does estimation get the parameters back?</h2>")
+        parts.append("<h2>Does each model earn its complexity?</h2>")
         parts.append(
-            '<p class="why">Every model here is estimated back from its own '
-            "simulated data by adaptive Gauss&ndash;Hermite quadrature, in "
-            "Python, as part of this build. Starting values are deliberately "
-            "displaced from the truth, so recovering it means the optimiser "
-            "found it rather than started on it. The test is whether each "
-            "parameter's confidence interval contains the value the data was "
-            "simulated from &mdash; not whether the estimate is close, which "
-            "depends as much on how much information the design carries as on "
-            "whether estimation worked.</p>")
+            '<p class="why">A model that fits its data is not the same as a '
+            "model worth writing: the simpler alternative might fit it just "
+            "as well, for fewer parameters. Every model "
+            "in this library exists because of one feature that separates it "
+            "from an obvious simpler alternative &mdash; a second "
+            "compartment, a resistance term, a turnover step, a shape "
+            "parameter, a between-subject variance. Each is switched off "
+            "here and everything else re-estimated, so the comparison is "
+            "between two fitted models rather than between a fit and a "
+            "guess, and the increase in objective function is what that "
+            "feature was buying.</p>")
         parts.append(_fig_pair(
-            diagnostics.recovery_plot(per_model, LIGHT),
-            diagnostics.recovery_plot(per_model, DARK),
-            "Parameter recovery across the library",
-            "Each mark is one parameter's estimate divided by the value its "
-            "data was simulated from, with a 95% confidence interval. The "
-            "same numbers are in the table under each model below."))
+            diagnostics.comparison_plot(comparisons, LIGHT),
+            diagnostics.comparison_plot(comparisons, DARK),
+            "Cost of dropping each model's distinguishing feature",
+            "Each model's own section below gives the question this is "
+            "answering, and the caveats where the null sits on a boundary."))
         parts.append("</section>")
 
     for m in CATALOGUE:
