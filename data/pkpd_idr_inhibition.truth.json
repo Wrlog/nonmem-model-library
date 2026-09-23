@@ -1,9 +1,9 @@
 {
   "parameters": {
     "TVCL": 4.0,
-    "TVV": 30.0,
-    "TVKIN": 10.0,
-    "TVKOUT": 0.1,
+    "TVV": 100.0,
+    "TVKIN": 0.8,
+    "TVKOUT": 0.008,
     "TVIMAX": 0.8,
     "TVIC50": 8.0,
     "TVIMAX_LOGIT": 1.3862943611198906,
@@ -13,6 +13,9 @@
   },
   "notes": {
     "structure": "Indirect response, inhibition of production",
-    "baseline": "kin/kout"
+    "baseline": "kin/kout = 100 units",
+    "dosing": "daily for 7 days, then 21 days of follow-up",
+    "biomarker_half_life_h": 86.6,
+    "drug_half_life_h": 17.3
   }
 }

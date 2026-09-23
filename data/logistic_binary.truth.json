@@ -5,8 +5,17 @@
     "IIV_SD": 0.6
   },
   "notes": {
-    "structure": "Binary logistic with IIV",
-    "responders": 244,
-    "n": 400
+    "structure": "Binary logistic with IIV, repeated visits",
+    "visits_weeks": [
+      4,
+      8,
+      12,
+      16,
+      20,
+      24
+    ],
+    "subjects": 350,
+    "responses": 1239,
+    "n": 2100
   }
 }

@@ -1,9 +1,8 @@
 """Static checks on the control streams.
 
-NONMEM is licensed software and is not run here, so these control streams
-are written but not executed by this repository. That is a real limitation
-and the README says so. What can be checked without NONMEM is checked, and
-it catches the mistakes that actually bite:
+These are the errors that a control stream can carry while still running to
+completion and reporting a plausible-looking objective function, which is
+what makes them worth catching mechanically rather than by reading:
 
 * `$INPUT` names must match the data file's columns, **in order** — with
   `IGNORE=@` NONMEM skips the header and reads positionally, so a control
@@ -87,7 +86,14 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
     input_body = _record(text, "INPUT")
     items = [i for i in re.split(r"[\s,]+", input_body.strip()) if i]
     data_body = _record(text, "DATA").strip()
-    data_ref = data_body.split()[0] if data_body else ""
+    # The path runs up to the first option (IGNORE=@, ACCEPT=..., REWIND) or
+    # the end of the line. Splitting on whitespace looks simpler and silently
+    # truncates any path containing a space, which then reports as "data file
+    # not found" and sends the reader looking in the wrong place.
+    first_line = data_body.splitlines()[0] if data_body else ""
+    option = re.search(r"\s+(?=[A-Za-z]+\s*=|\bREWIND\b|\bNOREWIND\b)",
+                       first_line)
+    data_ref = (first_line[:option.start()] if option else first_line).strip()
     csv_path = (mod_path.parent / data_ref).resolve()
     if not csv_path.exists():
         alt = data_dir / Path(data_ref).name

@@ -6,8 +6,8 @@
   },
   "notes": {
     "structure": "Weibull time to event",
-    "events": 131,
-    "censored": 169,
+    "events": 339,
+    "censored": 461,
     "follow_up_days": 365.0
   }
 }

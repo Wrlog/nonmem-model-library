@@ -10,6 +10,14 @@ $PROBLEM Time to event, Weibull baseline hazard with an exposure effect
 ;
 ; Data layout: one record at TIME=0 opening the interval with DV=0, then one
 ; record at the event or censoring time carrying DV=1 or DV=0.
+;
+; The frailty term ETA(1) is written in but fixed at zero. With one event
+; per subject there is nothing in the data to separate a subject who was
+; always at high risk from one who happened to have an early event, so an
+; estimated frailty variance here is not identified by the design; the data
+; is simulated without one for the same reason. The term stays in the
+; stream because it is where a frailty would go given repeated events, and
+; freeing it is a one-character change.
 
 $INPUT ID TIME DV EVID MDV EXPO
 $DATA ../data/tte_weibull.csv IGNORE=@
@@ -50,7 +58,7 @@ $THETA
 (-3, -0.025, 3)   ; 3 BETA   log hazard ratio per unit exposure
 
 $OMEGA
-0.04              ; 1 IIV on LAMBDA (frailty)
+0 FIX             ; 1 frailty on LAMBDA, held at zero -- see below
 
 $ESTIMATION METHOD=1 LAPLACE LIKELIHOOD MAXEVAL=9999 SIG=3 PRINT=5 NOABORT
 $COVARIANCE UNCONDITIONAL

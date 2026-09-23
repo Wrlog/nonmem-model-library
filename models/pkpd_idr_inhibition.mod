@@ -8,6 +8,15 @@ $PROBLEM Indirect response, drug inhibiting production of a biomarker
 ; the biomarker has its own turnover; washout after stopping is governed by
 ; KOUT, not by the drug's half-life. Baseline is the untreated steady state
 ; KIN/KOUT, so it is not a separate parameter.
+;
+; The design matters as much as the structure here. The drug is given daily
+; for a week and then stopped, and the biomarker's half-life (about 3.5
+; days) is roughly five times the drug's (about 17 hours). That separation
+; is what makes the two clocks distinguishable: the response is still
+; falling after the concentration has reached steady state, and still
+; recovering weeks after the last dose. With a biomarker that turned over
+; as fast as the drug cleared, this model and a direct effect model would
+; fit the same data equally well and there would be nothing to estimate.
 
 $INPUT ID TIME AMT DV MDV EVID CMT DOSE
 $DATA ../data/pkpd_idr_inhibition.csv IGNORE=@
@@ -42,10 +51,10 @@ IPRED = A(2)
 Y     = IPRED*(1 + EPS(1))
 
 $THETA
-(0, 4.0)          ; 1 CL   (L/h), driving PK
-(0, 30.0)         ; 2 V    (L)
-(0, 10.0)         ; 3 KIN  production rate (units/h)
-(0, 0.10)         ; 4 KOUT loss rate constant (1/h)
+(0, 4.0)          ; 1 CL   (L/h), driving PK, fixed from the PK analysis
+(0, 100.0)        ; 2 V    (L), likewise
+(0, 0.80)         ; 3 KIN  production rate (units/h)
+(0, 0.008)        ; 4 KOUT loss rate constant (1/h); baseline KIN/KOUT = 100
 (0, 0.80, 1)      ; 5 IMAX maximum fractional inhibition, bounded at 1
 (0, 8.0)          ; 6 IC50 concentration at half maximum inhibition (mg/L)
 

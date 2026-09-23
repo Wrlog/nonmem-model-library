@@ -70,7 +70,7 @@ def _two_cmt_conc(t, amount, n_doses, interval, inf_dur, cl, v1, q, v2):
     return out
 
 
-def simulate_pk_2cmt(n_subjects=60, seed=101) -> Simulated:
+def simulate_pk_2cmt(n_subjects=100, seed=101) -> Simulated:
     """Two-compartment IV infusion with allometric weight and IIV on CL and V1."""
     rng = np.random.default_rng(seed)
     truth = dict(TVCL=5.0, TVV1=15.0, TVQ=3.0, TVV2=25.0,
@@ -171,51 +171,77 @@ def simulate_tgi_claret(n_subjects=80, seed=202) -> Simulated:
 # Indirect response (Dayneka/Jusko model I: inhibition of production)
 # --------------------------------------------------------------------------
 
-def simulate_idr_inhibition(n_subjects=60, seed=303) -> Simulated:
+#: Daily dosing for a week, then four weeks of follow-up. The design is the
+#: point of this example: a single dose of a drug with a five-hour half-life
+#: perturbs a slow biomarker hardly at all, and the profile that comes back
+#: looks like noise. Dosing to a new steady state and then stopping is what
+#: makes the two clocks -- the drug's and the biomarker's -- visibly
+#: different, which is the whole reason to reach for an indirect response
+#: model instead of a direct one.
+IDR_DOSE_TIMES = np.arange(7) * 24.0
+IDR_OBS_TIMES = np.array([0, 12, 24, 48, 72, 96, 120, 144, 168, 192, 240,
+                          288, 336, 432, 528, 672], dtype=float)
+
+
+def simulate_idr_inhibition(n_subjects=96, seed=303) -> Simulated:
     """Indirect response with drug inhibiting production of the biomarker.
 
         dR/dt = kin*(1 - Imax*C/(IC50 + C)) - kout*R
 
     The response lags exposure because the biomarker turns over on its own
-    clock; washout after stopping is set by kout, not by the drug's half-life.
+    clock; washout after stopping is set by kout, not by the drug's
+    Here the drug's half-life is about seventeen hours and the biomarker's
+    about three and a half days, so the separation is large enough to see:
+    the response is still falling days after the concentration has reached
+    steady state, and still recovering weeks after the last dose.
     """
     rng = np.random.default_rng(seed)
-    truth = dict(TVCL=4.0, TVV=30.0,
-                 TVKIN=10.0, TVKOUT=0.10, TVIMAX=0.80, TVIC50=8.0,
+    truth = dict(TVCL=4.0, TVV=100.0,
+                 # KIN and KOUT together set the untreated baseline KIN/KOUT,
+                 # which is 100 units; KOUT alone sets how fast the biomarker
+                 # moves, and it is deliberately slow next to the drug -- the
+                 # biomarker's half-life is about five times the drug's.
+                 TVKIN=0.80, TVKOUT=0.008, TVIMAX=0.80, TVIC50=8.0,
                  # The model estimates IMAX on the logit scale to keep it in
                  # (0, 1), so the comparable truth is logit(0.8).
                  TVIMAX_LOGIT=float(np.log(0.80 / 0.20)),
                  IIV_KOUT_CV=0.30, IIV_IC50_CV=0.50, PROP_ERR=0.10)
 
-    times = np.array([0, 6, 12, 24, 48, 72, 96, 120, 168, 240, 336])
+    times = IDR_OBS_TIMES
     rows = []
     for i in range(1, n_subjects + 1):
-        dose = float(rng.choice([100.0, 300.0, 900.0]))
+        dose = float(rng.choice([50.0, 150.0, 450.0, 1350.0]))
         kout = truth["TVKOUT"] * _lognormal(rng, truth["IIV_KOUT_CV"])
         ic50 = truth["TVIC50"] * _lognormal(rng, truth["IIV_IC50_CV"])
         kin = truth["TVKIN"]
         imax = truth["TVIMAX"]
         r0 = kin / kout  # baseline is the steady state of the untreated system
 
-        # Driving concentration: one-compartment IV bolus, cleared first order.
+        # Driving concentration: one-compartment IV bolus given daily, each
+        # dose cleared first order and superposed on what is left of the
+        # previous ones.
         cl, v = truth["TVCL"], truth["TVV"]
         ke = cl / v
 
         def conc(t, dose=dose, v=v, ke=ke):
-            return (dose / v) * np.exp(-ke * t)
+            elapsed = t - IDR_DOSE_TIMES
+            return float(np.sum(np.where(elapsed >= 0,
+                                         (dose / v) * np.exp(-ke * elapsed),
+                                         0.0)))
 
         def rhs(t, y, imax=imax, ic50=ic50, kin=kin, kout=kout):
             c = conc(t)
             inhib = 1 - imax * c / (ic50 + c)
             return [kin * inhib - kout * y[0]]
 
-        sol = solve_ivp(rhs, (0, float(times[-1])), [r0], t_eval=times.astype(float),
-                        rtol=1e-8, atol=1e-10)
+        sol = solve_ivp(rhs, (0, float(times[-1])), [r0], t_eval=times,
+                        rtol=1e-9, atol=1e-11, max_step=6.0)
         ipred = sol.y[0]
         dv = ipred * (1 + rng.normal(0, truth["PROP_ERR"], ipred.size))
 
-        rows.append(dict(ID=i, TIME=0.0, AMT=dose, DV=".", MDV=1, EVID=1, CMT=1,
-                         DOSE=dose))
+        for t_dose in IDR_DOSE_TIMES:
+            rows.append(dict(ID=i, TIME=float(t_dose), AMT=dose, DV=".", MDV=1,
+                             EVID=1, CMT=1, DOSE=dose))
         for tt, y in zip(times, np.maximum(dv, 1e-3), strict=True):
             rows.append(dict(ID=i, TIME=float(tt), AMT=".", DV=round(float(y), 4),
                              MDV=0, EVID=0, CMT=2, DOSE=dose))
@@ -224,14 +250,17 @@ def simulate_idr_inhibition(n_subjects=60, seed=303) -> Simulated:
                                           ascending=[True, True, False])
     return Simulated(data.reset_index(drop=True), truth,
                      {"structure": "Indirect response, inhibition of production",
-                      "baseline": "kin/kout"})
+                      "baseline": "kin/kout = 100 units",
+                      "dosing": "daily for 7 days, then 21 days of follow-up",
+                      "biomarker_half_life_h": round(float(np.log(2) / 0.008), 1),
+                      "drug_half_life_h": round(float(np.log(2) / (4.0 / 100.0)), 1)})
 
 
 # --------------------------------------------------------------------------
 # Time to event (Weibull hazard with an exposure effect)
 # --------------------------------------------------------------------------
 
-def simulate_tte_weibull(n_subjects=300, seed=404, follow_up=365.0) -> Simulated:
+def simulate_tte_weibull(n_subjects=800, seed=404, follow_up=365.0) -> Simulated:
     """Parametric time-to-event, Weibull baseline hazard, exposure on the hazard.
 
         h(t) = LAMBDA*SHAPE*(LAMBDA*t)^(SHAPE-1) * exp(BETA*EXPO)
@@ -275,10 +304,19 @@ def simulate_tte_weibull(n_subjects=300, seed=404, follow_up=365.0) -> Simulated
 # Binary response (logistic regression with exposure)
 # --------------------------------------------------------------------------
 
-def simulate_logistic(n_subjects=400, seed=505) -> Simulated:
+def simulate_logistic(n_subjects=350, visits=(4, 8, 12, 16, 20, 24),
+                      seed=505) -> Simulated:
     """Binary endpoint with an exposure effect and between-subject variability.
 
         logit(P) = BASE + SLOPE*EXPO + ETA
+
+    The endpoint is scored at every visit, and that is not decoration. With
+    one record per subject the random effect on the logit is not
+    identifiable at all: a single Bernoulli draw cannot distinguish a
+    subject who is prone to respond from a subject who happened to respond,
+    so ETA and the residual randomness are the same thing and OMEGA collapses
+    to zero however it is estimated. Repeated assessments of the same subject
+    are what separate the two, and they are also what a real study does.
     """
     rng = np.random.default_rng(seed)
     truth = dict(BASE=-1.20, SLOPE=0.055, IIV_SD=0.60)
@@ -286,17 +324,20 @@ def simulate_logistic(n_subjects=400, seed=505) -> Simulated:
     rows = []
     for i in range(1, n_subjects + 1):
         expo = float(rng.uniform(0, 60))
-        eta = rng.normal(0, truth["IIV_SD"])
+        eta = rng.normal(0, truth["IIV_SD"])   # one draw, used at every visit
         logit = truth["BASE"] + truth["SLOPE"] * expo + eta
         p = 1 / (1 + np.exp(-logit))
-        dv = int(rng.uniform() < p)
-        rows.append(dict(ID=i, TIME=0, DV=dv, MDV=0, EVID=0,
-                         EXPO=round(expo, 2)))
+        for week in visits:
+            rows.append(dict(ID=i, TIME=float(week),
+                             DV=int(rng.uniform() < p), MDV=0, EVID=0,
+                             EXPO=round(expo, 2)))
 
     data = pd.DataFrame(rows)
     return Simulated(data, truth,
-                     {"structure": "Binary logistic with IIV",
-                      "responders": int(data["DV"].sum()),
+                     {"structure": "Binary logistic with IIV, repeated visits",
+                      "visits_weeks": list(visits),
+                      "subjects": n_subjects,
+                      "responses": int(data["DV"].sum()),
                       "n": len(data)})
 
 
