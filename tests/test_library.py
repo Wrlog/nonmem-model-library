@@ -12,6 +12,8 @@ it complains, which is the only way to know a linter is doing anything.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -28,6 +30,8 @@ from nmlib.simulate import (
 
 MODELS = ["pk_2cmt_iv", "tgi_claret", "pkpd_idr_inhibition",
           "tte_weibull", "logistic_binary"]
+EXAMPLES = sorted(p.stem for p in
+                  (Path(__file__).resolve().parents[1] / "examples").glob("*.mod"))
 
 
 # --- simulators -----------------------------------------------------------
@@ -119,6 +123,27 @@ def test_control_stream_passes_checks(key, tmp_path, repo_root):
     result = check_control_stream(repo_root / "models" / f"{key}.mod",
                                   repo_root / "data")
     assert result.ok, f"{key}: {result.errors}"
+
+
+@pytest.mark.parametrize("key", EXAMPLES)
+def test_example_passes_checks_apart_from_its_data(key, repo_root):
+    """Examples are templates with no dataset; everything else must hold."""
+    result = check_control_stream(repo_root / "examples" / f"{key}.mod",
+                                  repo_root / "data")
+    errors = [e for e in result.errors if not e.startswith("data file not found")]
+    assert not errors, f"{key}: {errors}"
+    assert not result.warnings, f"{key}: {result.warnings}"
+
+
+def test_checker_counts_etas_across_block_and_same_records(tmp_path, repo_root):
+    """Each $OMEGA BLOCK(1) SAME adds an ETA; dropping one must be caught."""
+    src = (repo_root / "examples" / "pk_2cmt_iv_iov.mod").read_text(encoding="utf-8")
+    broken = src.replace("$OMEGA BLOCK(1) SAME   ; 6 occasion 4\n", "")
+    assert broken != src
+    mod = tmp_path / "broken_iov.mod"
+    mod.write_text(broken, encoding="utf-8")
+    result = check_control_stream(mod, repo_root / "data")
+    assert any("ETA(6) referenced but only 5" in e for e in result.errors)
 
 
 def test_checker_catches_a_reordered_input(tmp_path, repo_root):

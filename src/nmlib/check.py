@@ -48,6 +48,33 @@ def _record(text: str, name: str) -> str:
     return m.group(1) if m else ""
 
 
+def _records(text: str, name: str) -> list[str]:
+    """Return the body of every $RECORD of this name, in order.
+
+    $OMEGA in particular is routinely split across records -- one per BLOCK,
+    or one per occasion with SAME -- and reading only the first undercounts.
+    """
+    pattern = rf"^\${name}\b(.*?)(?=^\$[A-Z]|\Z)"
+    return [m.group(1) for m in re.finditer(pattern, text, re.S | re.M | re.I)]
+
+
+def _count_random_effects(bodies: list[str]) -> int:
+    """Count the ETAs (or EPSs) declared across $OMEGA (or $SIGMA) records.
+
+    BLOCK(n) declares n effects however many values it lists, and
+    BLOCK(n) SAME declares n more with no values at all.
+    """
+    n = 0
+    for body in bodies:
+        block = re.match(r"\s*BLOCK\s*\(\s*(\d+)\s*\)", body, re.I)
+        if block:
+            n += int(block.group(1))
+            continue
+        body = re.sub(r"\bDIAG(?:ONAL)?\s*\(\s*\d+\s*\)", " ", body, flags=re.I)
+        n += _count_params(body)
+    return n
+
+
 def _count_params(body: str) -> int:
     """Count initial estimates in a $THETA/$OMEGA/$SIGMA body.
 
@@ -127,7 +154,9 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
     code = "\n".join(_record(text, r) for r in
                      ("PK", "PRED", "ERROR", "DES", "MIX", "AES"))
     for kind, record in (("THETA", "THETA"), ("ETA", "OMEGA"), ("EPS", "SIGMA")):
-        declared = _count_params(_record(text, record))
+        bodies = _records(text, record)
+        declared = (sum(_count_params(b) for b in bodies) if kind == "THETA"
+                    else _count_random_effects(bodies))
         # The lookbehind matters: ETA\(\d+\) also matches the tail of
         # THETA(1), which would report every THETA index as an ETA.
         pattern = rf"(?<![A-Z]){kind}\((\d+)\)"
@@ -147,7 +176,8 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
 
     # --- initial estimates inside their bounds ---------------------------
     for record in ("THETA",):
-        for i, (low, init, up) in enumerate(_bounds(_record(text, record)), start=1):
+        body = "\n".join(_records(text, record))
+        for i, (low, init, up) in enumerate(_bounds(body), start=1):
             if low is not None and init <= low:
                 res.errors.append(
                     f"${record} {i}: initial estimate {init} is not above its "
