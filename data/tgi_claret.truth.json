@@ -1,0 +1,21 @@
+{
+  "parameters": {
+    "TVY0": 50.0,
+    "TVKL": 0.006,
+    "TVKD": 0.012,
+    "TVLAMBDA": 0.015,
+    "IIV_Y0_CV": 0.45,
+    "IIV_KL_CV": 0.5,
+    "IIV_KD_CV": 0.6,
+    "PROP_ERR": 0.12
+  },
+  "notes": {
+    "structure": "Claret tumour growth inhibition",
+    "arms_mg_per_L": {
+      "0": 0.0,
+      "1": 15.0,
+      "2": 40.0
+    },
+    "endpoint": "sum of longest diameters (mm)"
+  }
+}

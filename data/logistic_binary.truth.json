@@ -1,0 +1,12 @@
+{
+  "parameters": {
+    "BASE": -1.2,
+    "SLOPE": 0.055,
+    "IIV_SD": 0.6
+  },
+  "notes": {
+    "structure": "Binary logistic with IIV",
+    "responders": 244,
+    "n": 400
+  }
+}

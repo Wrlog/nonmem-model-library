@@ -1,0 +1,18 @@
+{
+  "parameters": {
+    "TVCL": 5.0,
+    "TVV1": 15.0,
+    "TVQ": 3.0,
+    "TVV2": 25.0,
+    "WT_EXP_CL": 0.75,
+    "WT_EXP_V": 1.0,
+    "IIV_CL_CV": 0.3,
+    "IIV_V1_CV": 0.25,
+    "PROP_ERR": 0.15
+  },
+  "notes": {
+    "structure": "2-compartment, IV infusion",
+    "doses": 3,
+    "interval_h": 24.0
+  }
+}

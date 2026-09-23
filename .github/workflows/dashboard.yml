@@ -1,0 +1,62 @@
+name: Check, test and publish the dashboard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - name: Simulate the data
+        run: python -m nmlib.build --out site/index.html
+      - name: Tests
+        run: pytest
+      - name: Control streams pass their static checks
+        run: python -m nmlib.build --check
+      - name: The page is self-contained
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          html = pathlib.Path("site/index.html").read_text(encoding="utf-8")
+          external = re.findall(r'(?:src|href)="(?!data:|#)([^"]+)"', html)
+          bad = [u for u in external if not u.startswith("https://github.com/")]
+          if bad:
+              sys.exit(f"external references: {bad}")
+          print(f"self-contained, {len(html)/1024:.0f} KB")
+          PY
+      - uses: actions/configure-pages@v5
+        if: github.ref == 'refs/heads/main'
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

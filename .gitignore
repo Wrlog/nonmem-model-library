@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+site/
+.pytest_cache/
+.ruff_cache/
+
+# NONMEM run output, if anyone runs these locally
+*.lst
+*.ext
+*.phi
+*.cov
+*.cor
+*.coi
+*.msf
+sdtab*
+patab*
+catab*
+cotab*

@@ -1,0 +1,15 @@
+{
+  "parameters": {
+    "TVKIN": 10.0,
+    "TVKOUT": 0.1,
+    "TVIMAX": 0.8,
+    "TVIC50": 8.0,
+    "IIV_KOUT_CV": 0.3,
+    "IIV_IC50_CV": 0.5,
+    "PROP_ERR": 0.1
+  },
+  "notes": {
+    "structure": "Indirect response, inhibition of production",
+    "baseline": "kin/kout"
+  }
+}

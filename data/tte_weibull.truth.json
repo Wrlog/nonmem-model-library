@@ -1,0 +1,13 @@
+{
+  "parameters": {
+    "LAMBDA": 0.0025,
+    "SHAPE": 1.35,
+    "BETA_EXPO": -0.025
+  },
+  "notes": {
+    "structure": "Weibull time to event",
+    "events": 131,
+    "censored": 169,
+    "follow_up_days": 365.0
+  }
+}
