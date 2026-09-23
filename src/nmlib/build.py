@@ -13,7 +13,7 @@ import html
 import json
 from pathlib import Path
 
-from . import figures
+from . import diagnostics, figures
 from .check import check_all
 from .simulate import SIMULATORS
 from .theme import DARK, LIGHT
@@ -21,6 +21,8 @@ from .theme import DARK, LIGHT
 CATALOGUE = [
     {
         "key": "pk_2cmt_iv",
+        "fitted": True,
+        "log": True,
         "title": "Two-compartment IV population PK",
         "family": "Pharmacokinetics",
         "accent": "blue",
@@ -32,6 +34,7 @@ CATALOGUE = [
     },
     {
         "key": "tgi_claret",
+        "fitted": True,
         "title": "Tumour growth inhibition (Claret)",
         "family": "Oncology",
         "accent": "orange",
@@ -44,6 +47,7 @@ CATALOGUE = [
     },
     {
         "key": "pkpd_idr_inhibition",
+        "fitted": True,
         "title": "Indirect response, inhibition of production",
         "family": "PK/PD",
         "accent": "green",
@@ -205,6 +209,68 @@ def generate_data(root: Path) -> dict[str, dict]:
     return summary
 
 
+def _fig_pair(light: bytes, dark: bytes, alt: str, caption: str) -> str:
+    safe = html.escape(alt)
+    return "\n".join([
+        "<figure>",
+        f'  <img class="light-only" alt="{safe}" '
+        f'src="data:image/png;base64,{b64(light)}">',
+        f'  <img class="dark-only" alt="{safe}" '
+        f'src="data:image/png;base64,{b64(dark)}">',
+        f"  <figcaption>{caption}</figcaption>",
+        "</figure>",
+    ])
+
+
+def _diagnostics_html(root: Path, m: dict, df, info: dict) -> str:
+    """GOF, VPC and estimates-against-truth, when the model has been fitted."""
+    fit = diagnostics.load_fit(root / "fit" / "results", m["key"])
+    if not fit:
+        return ('<p class="reads">Not fitted in this build, so the figure '
+                'above is the simulation rather than an estimation result.</p>')
+
+    log_scale = bool(m.get("log"))
+    blocks = []
+    st = fit.get("status", {})
+    if st:
+        blocks.append(
+            f'<p class="problem">FOCEi, objective function '
+            f'{st.get("objective", "n/a")}, {st.get("seconds", "?")} s.</p>')
+
+    blocks.append(_fig_pair(
+        diagnostics.gof_panel(fit, LIGHT, log_scale),
+        diagnostics.gof_panel(fit, DARK, log_scale),
+        "Goodness of fit",
+        "Goodness of fit. The dashed line is unity; the orange line is a "
+        "binned median of the residuals, which should sit on zero."))
+
+    vpc_l = diagnostics.vpc_plot(fit, df, LIGHT, log_scale=log_scale)
+    vpc_d = diagnostics.vpc_plot(fit, df, DARK, log_scale=log_scale)
+    if vpc_l and vpc_d:
+        blocks.append(_fig_pair(
+            vpc_l, vpc_d, "Visual predictive check",
+            "Visual predictive check: observed percentiles against the "
+            "interval each percentile takes across 200 simulated replicates."))
+
+    cmp_df = diagnostics.estimates_vs_truth(fit, info["truth"])
+    if cmp_df is not None and not cmp_df.empty:
+        rows = []
+        for _, r in cmp_df.iterrows():
+            rse = r["rse_pct"]
+            rse_txt = "" if rse is None or rse != rse else f"{float(rse):.1f}%"
+            truth_txt = "" if r["truth"] is None else f'{float(r["truth"]):g}'
+            est_txt = "" if r["estimate"] is None else html.escape(str(r["estimate"]))
+            rows.append(
+                f'<tr><td>{html.escape(str(r["parameter"]))}</td>'
+                f"<td>{est_txt}</td><td>{rse_txt}</td><td>{truth_txt}</td></tr>")
+        blocks.append(
+            "<table><thead><tr><th>Parameter</th><th>Estimate</th>"
+            "<th>RSE</th><th>Simulated from</th></tr></thead>"
+            f'<tbody>{"".join(rows)}</tbody></table>')
+
+    return "".join(blocks)
+
+
 def build_site(root: Path, out: Path, summary: dict) -> Path:
     import pandas as pd
 
@@ -231,15 +297,30 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
                  + 'Dark mode</button></div>')
 
     n_fail = sum(1 for c in checks.values() if not c.ok)
-    parts.append(f"""<div class="note">
-  <strong>These control streams have not been executed.</strong> NONMEM is
-  licensed software and was not available where this was built, so every
-  figure below is the <em>simulation</em>, not an estimation result. What is
-  checked instead is everything that can be checked without running it:
-  $INPUT against the data columns in order, parameter references against
-  declarations, initial estimates against their bounds, compartments against
-  $MODEL, and likelihood models against their $ESTIMATION record.
-  {len(checks) - n_fail} of {len(checks)} pass.
+    fitted = [m["key"] for m in CATALOGUE
+              if diagnostics.load_fit(root / "fit" / "results", m["key"])]
+    engine = ""
+    for key in fitted:
+        f = diagnostics.load_fit(root / "fit" / "results", key)
+        if f and f.get("status", {}).get("engine"):
+            engine = f["status"]["engine"]
+            break
+
+    if fitted:
+        parts.append(f"""<div class="note">
+  <strong>Fitted with {html.escape(engine or "nlmixr2")}, by FOCEi.</strong>
+  {len(fitted)} of {len(CATALOGUE)} models are estimated back from their own
+  simulated data, so the goodness-of-fit plots, the visual predictive checks
+  and the estimate-against-truth tables below are real estimation results.
+  The NONMEM control streams describe the same structures for use in NONMEM
+  and pass their static checks ({len(checks) - n_fail} of {len(checks)}).
+</div>""")
+    else:
+        parts.append(f"""<div class="note">
+  <strong>Simulation only in this build.</strong> No fit results were found,
+  so the figures below are the simulated data rather than estimation
+  results. The control streams pass their static checks
+  ({len(checks) - n_fail} of {len(checks)}).
 </div>""")
 
     for m in CATALOGUE:
@@ -294,6 +375,7 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
             "<table><thead><tr><th>Simulated from</th><th>Value</th></tr></thead>"
             f"<tbody>{truth_rows}</tbody></table>",
             f"<p>Control stream: {status}</p>{detail}",
+            _diagnostics_html(root, m, df, info),
             f"<details><summary>Show {key}.mod</summary>"
             f"<pre><code>{html.escape(mod_text)}</code></pre></details>",
         ]
