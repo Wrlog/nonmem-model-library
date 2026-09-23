@@ -112,7 +112,7 @@ tgi_claret <- function() {
   ini({
     tvy0  <- log(50.0)
     tvkl  <- log(0.006)
-    tvkd  <- log(0.012)
+    tvkd  <- log(0.0004)
     tvlam <- log(0.015)
     eta.y0 ~ 0.18
     eta.kl ~ 0.22

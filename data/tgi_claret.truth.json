@@ -2,7 +2,7 @@
   "parameters": {
     "TVY0": 50.0,
     "TVKL": 0.006,
-    "TVKD": 0.012,
+    "TVKD": 0.0004,
     "TVLAMBDA": 0.015,
     "IIV_Y0_CV": 0.35,
     "IIV_KL_CV": 0.35,

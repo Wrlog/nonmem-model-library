@@ -124,7 +124,7 @@ def simulate_tgi_claret(n_subjects=80, seed=202) -> Simulated:
     reproduce regrowth on treatment.
     """
     rng = np.random.default_rng(seed)
-    truth = dict(TVY0=50.0, TVKL=0.006, TVKD=0.012, TVLAMBDA=0.015,
+    truth = dict(TVY0=50.0, TVKL=0.006, TVKD=0.0004, TVLAMBDA=0.015,
                  IIV_Y0_CV=0.35, IIV_KL_CV=0.35, IIV_KD_CV=0.40,
                  PROP_ERR=0.12, EXPO_CV=0.30)
 
@@ -154,7 +154,10 @@ def simulate_tgi_claret(n_subjects=80, seed=202) -> Simulated:
                         rtol=1e-8, atol=1e-10)
         ipred = sol.y[0]
         dv = ipred * (1 + rng.normal(0, truth["PROP_ERR"], ipred.size))
-        for tt, y in zip(days, np.maximum(dv, 0.1), strict=True):
+        # A floor well below any realistic trajectory: if it ever binds the
+        # data is censored and the model cannot reproduce it, which is what
+        # an earlier version of this simulator got wrong.
+        for tt, y in zip(days, np.maximum(dv, 0.5), strict=True):
             rows.append(dict(ID=i, TIME=float(tt), DV=round(float(y), 3),
                              MDV=0, EVID=0, EXPO=expo, ARM=arm))
 

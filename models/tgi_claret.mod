@@ -36,7 +36,7 @@ Y     = IPRED*(1 + EPS(1))
 $THETA
 (0, 50.0)    ; 1 Y0     baseline tumour size (mm)
 (0, 0.006)   ; 2 KL     growth rate (1/day)
-(0, 0.012)   ; 3 KD     kill rate per unit exposure
+(0, 0.0004)  ; 3 KD     kill rate per unit exposure
 (0, 0.015)   ; 4 LAMBDA resistance rate (1/day)
 
 $OMEGA
