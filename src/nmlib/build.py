@@ -423,10 +423,11 @@ def _comparison_block(status: dict) -> str:
         verdict = (
             f'dropping it costs <b>{c["delta_ofv"]:.1f}</b> objective function '
             f'on {c["df"]} degree{"s" if c["df"] != 1 else ""} of freedom'
-            + (f", p {'<' if p is not None and p < 1e-4 else '='} "
-               + ("0.0001" if p is not None and p < 1e-4
-                  else (f"{p:.3g}" if p is not None else "n/a"))
-               if p is not None else ""))
+            # &lt; not "<": a bare less-than in HTML text opens a tag, and
+            # a lenient browser recovering from it is not the same as the
+            # markup being right.
+            + (", p &lt; 0.0001" if p is not None and p < 1e-4
+               else (f", p = {p:.3g}" if p is not None else "")))
         caveat = (" The null sits on the edge of the parameter space here, "
                   "so the chi-square reference is conservative and the real "
                   "p-value is smaller than the one quoted."

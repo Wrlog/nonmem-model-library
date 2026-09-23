@@ -962,6 +962,9 @@ class FitResult:
     converged: bool
     message: str
     estimates: pd.DataFrame
+    #: The fitted parameter vector on the estimation scale, used to warm
+    #: start the reduced model in the nested comparisons.
+    x: np.ndarray | None = None
     gof: pd.DataFrame | None = None
     vpc: pd.DataFrame | None = None
     etas: pd.DataFrame | None = None
@@ -996,19 +999,32 @@ def _jacobian(fn, x: np.ndarray, rel: float = 1e-5) -> np.ndarray:
     return np.stack(cols, axis=1)
 
 
-def _optimise(objective, x0: np.ndarray, box: list[tuple[float, float]]):
+def _optimise(objective, x0: np.ndarray, box: list[tuple[float, float]],
+              thorough: bool = True):
     """Simplex into the right basin, then a quasi-Newton step to finish.
 
     The start is deliberately poor and the first few hundred units of
     objective function are where a gradient method is least reliable, so
     Nelder-Mead goes first; the quadrature makes the surface smooth enough
     for L-BFGS-B to sharpen the answer afterwards.
+
+    `thorough=False` is for the reduced models in the nested comparisons.
+    Those are only ever read as a difference of a few tens to a few
+    thousand objective-function units, so a tolerance that would matter for
+    a reported estimate is wasted effort there -- and a deliberately
+    mis-specified model is exactly the case where the simplex takes longest
+    to satisfy a tight one.
     """
+    if thorough:
+        nm = {"maxiter": 400 * max(len(x0), 1), "xatol": 1e-4, "fatol": 1e-4}
+        lb = {"maxiter": 500, "ftol": 1e-12, "gtol": 1e-8}
+    else:
+        nm = {"maxiter": 120 * max(len(x0), 1), "xatol": 1e-3, "fatol": 1e-2}
+        lb = {"maxiter": 200, "ftol": 1e-9, "gtol": 1e-6}
     coarse = minimize(objective, x0, method="Nelder-Mead", bounds=box,
-                      options={"maxiter": 400 * max(len(x0), 1),
-                               "xatol": 1e-4, "fatol": 1e-4, "adaptive": True})
+                      options={**nm, "adaptive": True})
     fine = minimize(objective, coarse.x, method="L-BFGS-B", bounds=box,
-                    options={"maxiter": 500, "ftol": 1e-12, "gtol": 1e-8})
+                    options=lb)
     return fine if fine.fun <= coarse.fun else coarse
 
 
@@ -1024,8 +1040,8 @@ def _objective_for(model: PopModel, n_nodes: int):
     return objective
 
 
-def fit_reduced(model: PopModel, n_nodes: int,
-                fixed: dict[int, float]) -> tuple[float, int]:
+def fit_reduced(model: PopModel, n_nodes: int, fixed: dict[int, float],
+                warm_start: np.ndarray | None = None) -> tuple[float, int]:
     """Refit with some parameters held, and return the objective and the df.
 
     Used for the nested comparisons: holding a parameter at the value that
@@ -1033,22 +1049,40 @@ def fit_reduced(model: PopModel, n_nodes: int,
     worse the fit gets is what says whether that feature was paying for
     itself. Only the objective is needed, so no standard errors are
     computed and the run is cheap.
+
+    The search is run twice, from the model's usual displaced start and
+    from the full model's own solution, and the better of the two is kept.
+    A deliberately bad model has an awkward likelihood surface -- a
+    one-compartment model fitted to two-compartment data especially -- and
+    from a single start the optimiser can settle in a local optimum that
+    differs between machines. Reporting whichever start found the lower
+    objective makes the comparison a lower bound on the cost of dropping
+    the feature, and makes it reproduce.
     """
     full_objective = _objective_for(model, n_nodes)
-    x0 = model.start()
-    free = [i for i in range(len(x0)) if i not in fixed]
+    base = np.asarray(model.start(), dtype=float)
+    free = [i for i in range(len(base)) if i not in fixed]
+    box = model.bounds()
 
     def expand(xf: np.ndarray) -> np.ndarray:
-        x = np.asarray(x0, dtype=float).copy()
+        x = base.copy()
         for i, value in fixed.items():
             x[i] = value
         x[free] = xf
         return x
 
-    box = model.bounds()
-    result = _optimise(lambda xf: full_objective(expand(xf)),
-                       np.asarray(x0)[free], [box[i] for i in free])
-    return float(full_objective(expand(np.asarray(result.x)))), len(fixed)
+    starts = [base[free]]
+    if warm_start is not None:
+        warm = np.clip(np.asarray(warm_start, dtype=float)[free],
+                       [box[i][0] for i in free], [box[i][1] for i in free])
+        starts.append(warm)
+
+    best = min(
+        float(full_objective(expand(np.asarray(
+            _optimise(lambda xf: full_objective(expand(xf)), start,
+                      [box[i] for i in free], thorough=False).x))))
+         for start in starts)
+    return best, len(fixed)
 
 
 def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
@@ -1108,7 +1142,7 @@ def fit_model(key: str, data: pd.DataFrame, truth: dict[str, float],
     return FitResult(
         key=key, objective=ofv, seconds=seconds, nodes=n_nodes,
         converged=bool(best.success), message=str(best.message),
-        estimates=estimates, gof=gof, vpc=vpc, etas=etas,
+        estimates=estimates, x=x, gof=gof, vpc=vpc, etas=etas,
         extra={"subjects": int(model.n_subj), "eta": model.n_eta,
                "shrinkage": shrinkage},
     )
@@ -1235,7 +1269,8 @@ def _vpc_table(model: PopModel, x: np.ndarray, seed: int,
 
 
 def run_comparison(key: str, data: pd.DataFrame, truth: dict[str, float],
-                   full_ofv: float, verbose: bool = True) -> dict | None:
+                   full_ofv: float, full_x: np.ndarray | None = None,
+                   verbose: bool = True) -> dict | None:
     """Refit the model with its distinguishing feature switched off.
 
     Two shapes of comparison come out of this, and they are not the same
@@ -1256,10 +1291,17 @@ def run_comparison(key: str, data: pd.DataFrame, truth: dict[str, float],
     model = spec.get("alternative", MODELS[key])(data, truth)
     fixed = spec.get("fix")
     if fixed:
-        reduced_ofv, n_fixed = fit_reduced(model, n_nodes, fixed)
+        reduced_ofv, n_fixed = fit_reduced(model, n_nodes, fixed, full_x)
     else:
-        reduced_ofv = float(_optimise(_objective_for(model, n_nodes),
-                                      model.start(), model.bounds()).fun)
+        objective = _objective_for(model, n_nodes)
+        box = model.bounds()
+        starts = [model.start()]
+        if full_x is not None:
+            starts.append(np.clip(full_x, [b[0] for b in box],
+                                  [b[1] for b in box]))
+        reduced_ofv = min(float(_optimise(objective, st, box,
+                                          thorough=False).fun)
+                          for st in starts)
         n_fixed = 0
     df = int(spec["df"]) if "df" in spec else n_fixed
 
@@ -1310,7 +1352,7 @@ def fit_all(root: Path, keys: list[str] | None = None,
             result.etas.to_csv(out_dir / f"{key}_etas.csv", index=False)
 
         comparison = run_comparison(key, data, truth, result.objective,
-                                    verbose=verbose)
+                                    full_x=result.x, verbose=verbose)
         (out_dir / f"{key}_status.json").write_text(json.dumps({
             "model": key,
             "objective": result.objective,
