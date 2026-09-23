@@ -16,35 +16,19 @@ can fail.
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-from PIL import Image
 
+from conftest import INK_FLOOR, coloured_fraction
 from nmlib import diagnostics, figures
 from nmlib.build import CATALOGUE
 from nmlib.theme import DARK, LIGHT, finish, panel, style_axes
 
-#: Below this fraction of coloured pixels, a figure has not drawn its data.
-INK_FLOOR = 0.0015
-
 THEMES = [LIGHT, DARK]
-
-
-def coloured_fraction(png: bytes) -> float:
-    """Fraction of pixels carrying a data colour rather than grey chrome.
-
-    Chrome -- axes, gridlines, text, the muted spaghetti lines -- is grey or
-    near-grey, so it has almost no chroma. Every series colour in the
-    palette has plenty.
-    """
-    pixels = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"), dtype=int)
-    chroma = pixels.max(axis=2) - pixels.min(axis=2)
-    return float((chroma > 25).mean())
 
 
 def _data(repo_root: Path, key: str):

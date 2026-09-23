@@ -2,8 +2,20 @@ $PROBLEM Two-compartment IV infusion, allometric weight, IIV on CL and V1
 ; Data: data/pk_2cmt_iv.csv, simulated by nmlib.simulate.simulate_pk_2cmt
 ; The workhorse structural PK model: everything downstream in this library
 ; that needs an exposure driver assumes something of this shape.
+;
+; Four covariates are carried on the data. Only WT is in the model, and
+; that is the point of the covariate screen on the dashboard: AGE and SEX
+; have no effect to find, and CYP -- a metaboliser genotype that really
+; does lower clearance -- is deliberately left out so the screen has
+; something to catch. Adding it is the obvious next run:
+;
+;   CL = THETA(1)*(WT/70)**0.75*EXP(ETA(1))*(1 + THETA(5)*CYP)
+;
+; Until then the OMEGA on CL is carrying the genotype split as if it were
+; unexplained between-subject variability, which is exactly what an
+; unmodelled covariate does to a population model.
 
-$INPUT ID TIME AMT RATE DV MDV EVID CMT WT
+$INPUT ID TIME AMT RATE DV MDV EVID CMT WT AGE SEX CYP
 $DATA ../data/pk_2cmt_iv.csv IGNORE=@
 
 $SUBROUTINE ADVAN3 TRANS4

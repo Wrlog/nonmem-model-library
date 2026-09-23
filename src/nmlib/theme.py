@@ -243,11 +243,15 @@ def plain_log_ticks(ax, axis: str = "y") -> None:
     A reader of a concentration axis wants the concentration, not its
     exponent.
     """
-    from matplotlib.ticker import FuncFormatter
+    from matplotlib.ticker import FuncFormatter, NullFormatter
 
     fmt = FuncFormatter(lambda v, _: f"{v:g}" if v >= 0.01 else "")
     for name in axis:
-        (ax.yaxis if name == "y" else ax.xaxis).set_major_formatter(fmt)
+        target = ax.yaxis if name == "y" else ax.xaxis
+        target.set_major_formatter(fmt)
+        # Over a narrow range matplotlib labels the minor ticks too, and
+        # those come out as "2 x 10^1" beside a major tick reading "20".
+        target.set_minor_formatter(NullFormatter())
 
 
 #: Palette size used when packing a figure into the page. These are line

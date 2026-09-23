@@ -8,11 +8,16 @@
     "WT_EXP_V": 1.0,
     "IIV_CL_CV": 0.3,
     "IIV_V1_CV": 0.25,
-    "PROP_ERR": 0.15
+    "PROP_ERR": 0.15,
+    "CYP_PM_FRACTION": 0.22,
+    "CYP_PM_CL_RATIO": 0.55,
+    "IIV_CL_CV_APPARENT": 0.3986775947300845,
+    "TVCL_APPARENT": 4.383790548979054
   },
   "notes": {
     "structure": "2-compartment, IV infusion",
     "doses": 3,
-    "interval_h": 24.0
+    "interval_h": 24.0,
+    "covariates": "WT in the model; AGE and SEX inert; CYP genotype real but left out"
   }
 }

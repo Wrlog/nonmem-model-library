@@ -71,18 +71,58 @@ def _two_cmt_conc(t, amount, n_doses, interval, inf_dur, cl, v1, q, v2):
 
 
 def simulate_pk_2cmt(n_subjects=100, seed=101) -> Simulated:
-    """Two-compartment IV infusion with allometric weight and IIV on CL and V1."""
+    """Two-compartment IV infusion with allometric weight and IIV on CL and V1.
+
+    The subjects carry four covariates, and only one of them does anything.
+    That is deliberate: a covariate screen is only worth showing if it has
+    something to find and something to correctly reject.
+
+    * **WT** drives clearance and volume allometrically, and the control
+      stream already includes it. A screen should therefore find *no*
+      residual relationship between weight and the random effects -- the
+      covariate model has already taken it.
+    * **AGE** and **SEX** are recorded and have no effect at all. They are
+      the negative controls.
+    * **CYP** is a metaboliser genotype that genuinely lowers clearance,
+      and the control stream does **not** include it. It is what the screen
+      is supposed to catch.
+
+    Leaving CYP out of the base model has a consequence worth being honest
+    about: the between-subject variability the model can see on clearance
+    is not the 30% that was drawn, but that inflated by the genotype split
+    it cannot explain. `IIV_CL_CV_APPARENT` below is that combined figure,
+    worked out in closed form, and it is what the estimate should match.
+    Recovering 30% here would mean something had gone wrong.
+    """
     rng = np.random.default_rng(seed)
     truth = dict(TVCL=5.0, TVV1=15.0, TVQ=3.0, TVV2=25.0,
                  WT_EXP_CL=0.75, WT_EXP_V=1.0,
-                 IIV_CL_CV=0.30, IIV_V1_CV=0.25, PROP_ERR=0.15)
+                 IIV_CL_CV=0.30, IIV_V1_CV=0.25, PROP_ERR=0.15,
+                 CYP_PM_FRACTION=0.22, CYP_PM_CL_RATIO=0.55)
+
+    # Apparent variability on clearance once the unmodelled genotype split
+    # is folded into it: var(log CL) = p(1-p)*log(ratio)^2 + omega^2.
+    p, ratio = truth["CYP_PM_FRACTION"], truth["CYP_PM_CL_RATIO"]
+    omega2 = np.log(1 + truth["IIV_CL_CV"] ** 2)
+    apparent = p * (1 - p) * np.log(ratio) ** 2 + omega2
+    truth["IIV_CL_CV_APPARENT"] = float(np.sqrt(np.expm1(apparent)))
+    # The typical value moves too. A model without the genotype estimates
+    # the geometric mean clearance over both groups, which is TVCL pulled
+    # down by the poor metabolisers in proportion to how many there are.
+    truth["TVCL_APPARENT"] = float(truth["TVCL"] * ratio ** p)
 
     times = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 36.0, 48.0])
     interval, inf_dur, n_doses = 24.0, 1.0, 3
     rows = []
     for i in range(1, n_subjects + 1):
         wt = float(rng.uniform(45, 110))
+        age = int(rng.integers(18, 81))
+        sex = int(rng.integers(0, 2))
+        cyp = int(rng.uniform() < truth["CYP_PM_FRACTION"])
+        covariates = dict(WT=round(wt, 1), AGE=age, SEX=sex, CYP=cyp)
+
         cl = (truth["TVCL"] * (wt / 70) ** truth["WT_EXP_CL"]
+              * (truth["CYP_PM_CL_RATIO"] if cyp else 1.0)
               * _lognormal(rng, truth["IIV_CL_CV"]))
         v1 = (truth["TVV1"] * (wt / 70) ** truth["WT_EXP_V"]
               * _lognormal(rng, truth["IIV_V1_CV"]))
@@ -93,7 +133,7 @@ def simulate_pk_2cmt(n_subjects=100, seed=101) -> Simulated:
         # Dosing records, one per administration.
         for d in range(n_doses):
             rows.append(dict(ID=i, TIME=d * interval, AMT=dose, RATE=dose / inf_dur,
-                             DV=".", MDV=1, EVID=1, CMT=1, WT=round(wt, 1)))
+                             DV=".", MDV=1, EVID=1, CMT=1, **covariates))
         # Observations, sampled after the last dose as well as within it.
         obs_t = np.concatenate([times, times[-3:] + 2 * interval])
         ipred = _two_cmt_conc(obs_t, dose, n_doses, interval, inf_dur, cl, v1, q, v2)
@@ -101,13 +141,15 @@ def simulate_pk_2cmt(n_subjects=100, seed=101) -> Simulated:
         for tt, y in zip(obs_t, np.maximum(dv, 1e-4), strict=True):
             rows.append(dict(ID=i, TIME=float(tt), AMT=".", RATE=".",
                              DV=round(float(y), 4), MDV=0, EVID=0, CMT=1,
-                             WT=round(wt, 1)))
+                             **covariates))
 
     data = pd.DataFrame(rows).sort_values(["ID", "TIME", "EVID"],
                                           ascending=[True, True, False])
     return Simulated(data.reset_index(drop=True), truth,
                      {"structure": "2-compartment, IV infusion",
-                      "doses": n_doses, "interval_h": interval})
+                      "doses": n_doses, "interval_h": interval,
+                      "covariates": "WT in the model; AGE and SEX inert; "
+                                    "CYP genotype real but left out"})
 
 
 # --------------------------------------------------------------------------

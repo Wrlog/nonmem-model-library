@@ -449,10 +449,18 @@ class PK2Cmt(PopModel):
                          _cv(_exp(x[4])), _cv(_exp(x[5])), _exp(x[6])])
 
     def report(self):
+        # CL and its variability are compared against the *apparent*
+        # simulated values, not the drawn ones. This model has no genotype
+        # term, so what it can estimate is the geometric mean clearance
+        # across both metaboliser groups and a between-subject variability
+        # that has the genotype split folded into it. Comparing against the
+        # drawn values would report a correct fit of a deliberately
+        # incomplete model as a recovery failure.
         return [
-            Report("CL", "TVCL", "L/h"), Report("V1", "TVV1", "L"),
+            Report("CL, apparent", "TVCL_APPARENT", "L/h"),
+            Report("V1", "TVV1", "L"),
             Report("Q", "TVQ", "L/h"), Report("V2", "TVV2", "L"),
-            Report("IIV on CL", "IIV_CL_CV", "CV"),
+            Report("IIV on CL, apparent", "IIV_CL_CV_APPARENT", "CV"),
             Report("IIV on V1", "IIV_V1_CV", "CV"),
             Report("Proportional error", "PROP_ERR", "CV"),
         ]

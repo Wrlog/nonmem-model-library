@@ -21,11 +21,40 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import diagnostics, figures
+from . import diagnostics, eda, figures
 from .check import check_all
 from .estimate import fit_all
 from .simulate import SIMULATORS
 from .theme import DARK, LIGHT
+
+#: What each dataset records about its subjects, and how to summarise it.
+#: `in_model` marks a covariate the control stream already accounts for --
+#: a screen should find nothing left in those, and finding something would
+#: mean the covariate model has the wrong shape rather than the wrong
+#: variables.
+COVARIATES = {
+    "pk_2cmt_iv": {
+        "WT": {"label": "Weight", "unit": "kg", "in_model": True},
+        "AGE": {"label": "Age", "unit": "years"},
+        "SEX": {"label": "Sex", "levels": {0: "female", 1: "male"}},
+        "CYP": {"label": "CYP genotype",
+                "levels": {0: "normal", 1: "poor metaboliser"}},
+    },
+    "tgi_claret": {
+        "EXPO": {"label": "Exposure", "unit": "mg/L", "in_model": True},
+        "ARM": {"label": "Arm", "in_model": True,
+                "levels": {0: "placebo", 1: "low", 2: "high"}},
+    },
+    "pkpd_idr_inhibition": {
+        "DOSE": {"label": "Dose", "unit": "mg", "in_model": True},
+    },
+    "tte_weibull": {
+        "EXPO": {"label": "Exposure", "in_model": True},
+    },
+    "logistic_binary": {
+        "EXPO": {"label": "Exposure", "in_model": True},
+    },
+}
 
 CATALOGUE = [
     {
@@ -369,6 +398,95 @@ def _estimates_table(est: pd.DataFrame) -> str:
             f"<tbody>{''.join(rows)}</tbody></table>")
 
 
+def _eda_block(key: str, df, fit: dict | None) -> str:
+    """Exploratory analysis: Table 1 always, the fuller screen where it pays.
+
+    The PK dataset is the one carrying a covariate set worth screening, so
+    it gets the worked example -- sampling density, raw individual
+    profiles, and every random effect against every covariate. The others
+    get Table 1, which is the part that belongs with any dataset.
+    """
+    spec = COVARIATES.get(key, {})
+    blocks = ["<h3>Before any model: what is in the data</h3>",
+              eda.table_one_html(eda.table_one(df, spec))]
+
+    if key != "pk_2cmt_iv":
+        return "".join(blocks)
+
+    blocks.append(
+        '<p class="status">Covariates are summarised once per subject, not '
+        "once per record. Summarising per record makes a heavily sampled "
+        "subject count several times over, which is a quiet way to describe "
+        "a population that is not the one in the study.</p>")
+
+    profiles_l = eda.individual_profiles(df, LIGHT, annotate=("WT",))
+    profiles_d = eda.individual_profiles(df, DARK, annotate=("WT",))
+    if profiles_l and profiles_d:
+        blocks.append(_fig_pair(
+            profiles_l, profiles_d, "Individual profiles before fitting",
+            "The plot that chooses the structural model. The mean profile "
+            "cannot make this call: averaging curves with different "
+            "clearances bends the average whether or not any subject bends."))
+
+    if fit and "etas" in fit:
+        screen = eda.covariate_screen(fit["etas"], df, spec)
+        blocks.append(_covariate_verdict(screen))
+        for eta in [c for c in fit["etas"].columns if c != "ID"]:
+            light = eda.covariate_plot(fit["etas"], df, spec, LIGHT, eta)
+            dark = eda.covariate_plot(fit["etas"], df, spec, DARK, eta)
+            if light and dark:
+                blocks.append(_fig_pair(
+                    light, dark, f"Covariate screen on eta for {eta}",
+                    "Weight is already in the model, so the flat line "
+                    "against it is the right answer, not a null result."))
+    return "".join(blocks)
+
+
+def _covariate_verdict(screen) -> str:
+    """State what the screen found, in the order it should be acted on."""
+    if screen.empty:
+        return ""
+    flagged = screen[screen["strength"] >= eda.SCREEN_FLAG]
+    rows = "".join(
+        f'<tr><td>{html.escape(str(r.label))}</td>'
+        f"<td>{html.escape(str(r.eta))}</td>"
+        f"<td>{html.escape(str(r.kind))}</td>"
+        f"<td>{r.strength:.2f}</td>"
+        f'<td>{"in the model already" if r.in_model else "not in the model"}'
+        "</td></tr>"
+        for r in screen.itertuples())
+    table = ("<table><thead><tr><th>Covariate</th><th>Random effect</th>"
+             "<th>Measure</th><th>Strength</th><th>Status</th></tr></thead>"
+             f"<tbody>{rows}</tbody></table>")
+
+    if flagged.empty:
+        verdict = ("Nothing clears the screening threshold, so there is no "
+                   "covariate here worth a further run.")
+    else:
+        top = flagged.iloc[0]
+        others = len(flagged) - 1
+        verdict = (
+            f"<b>{html.escape(str(top.label))}</b> against the random effect "
+            f"on {html.escape(str(top.eta))} is the strongest signal by a "
+            f"distance, at {top.strength:.2f} standard deviations between "
+            "groups, and it is not in the model. That is the next run to "
+            "make.")
+        if others:
+            verdict += (
+                f" The remaining {others} above the threshold are weaker and "
+                "are most likely the same effect seen twice: the empirical "
+                "Bayes estimates for the two random effects are themselves "
+                "correlated, so a real shift in one shows up faintly in the "
+                "other.")
+    return (
+        '<p class="status">Every random effect against every covariate, '
+        "ranked. Continuous covariates get a rank correlation, categorical "
+        "ones the gap in median eta between groups in standard deviations, "
+        "so the two are comparable. This ranks what to try next; whether a "
+        "covariate belongs in the model is settled by fitting it, not "
+        f"here.</p><p class=\"status\">{verdict}</p>{table}")
+
+
 def _shrinkage_block(status: dict) -> str:
     """Shrinkage, stated before the plots it qualifies.
 
@@ -470,6 +588,8 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
     ]
 
     fit = diagnostics.load_fit(root / "fit" / "results", key)
+    body.append(_eda_block(key, df, fit))
+
     if fit:
         st = fit.get("status", {})
         est = fit["estimates"]
