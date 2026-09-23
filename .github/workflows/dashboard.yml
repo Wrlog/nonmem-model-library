@@ -48,11 +48,18 @@ jobs:
 
       - run: ruff check .
 
+      # Everything that does not need a fit first, for fast feedback.
       - name: Tests
-        run: pytest
+        run: pytest --ignore=tests/test_figures.py
 
       - name: Simulate, fit, check and build
         run: python -m nmlib.build --out site/index.html
+
+      # These read fit/results/ and assert that every panel actually drew
+      # its data, so they have to run after the build rather than before it.
+      # Run before the page is uploaded: an empty plot is a broken page.
+      - name: Every figure contains its data
+        run: pytest tests/test_figures.py -q
 
       - name: Every parameter is accounted for
         run: |
