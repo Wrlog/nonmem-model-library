@@ -173,7 +173,11 @@ def simulate_idr_inhibition(n_subjects=60, seed=303) -> Simulated:
     clock; washout after stopping is set by kout, not by the drug's half-life.
     """
     rng = np.random.default_rng(seed)
-    truth = dict(TVKIN=10.0, TVKOUT=0.10, TVIMAX=0.80, TVIC50=8.0,
+    truth = dict(TVCL=4.0, TVV=30.0,
+                 TVKIN=10.0, TVKOUT=0.10, TVIMAX=0.80, TVIC50=8.0,
+                 # The model estimates IMAX on the logit scale to keep it in
+                 # (0, 1), so the comparable truth is logit(0.8).
+                 TVIMAX_LOGIT=float(np.log(0.80 / 0.20)),
                  IIV_KOUT_CV=0.30, IIV_IC50_CV=0.50, PROP_ERR=0.10)
 
     times = np.array([0, 6, 12, 24, 48, 72, 96, 120, 168, 240, 336])
@@ -187,7 +191,7 @@ def simulate_idr_inhibition(n_subjects=60, seed=303) -> Simulated:
         r0 = kin / kout  # baseline is the steady state of the untreated system
 
         # Driving concentration: one-compartment IV bolus, cleared first order.
-        cl, v = 4.0, 30.0
+        cl, v = truth["TVCL"], truth["TVV"]
         ke = cl / v
 
         def conc(t, dose=dose, v=v, ke=ke):

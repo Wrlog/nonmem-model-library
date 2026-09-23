@@ -1,9 +1,12 @@
 {
   "parameters": {
+    "TVCL": 4.0,
+    "TVV": 30.0,
     "TVKIN": 10.0,
     "TVKOUT": 0.1,
     "TVIMAX": 0.8,
     "TVIC50": 8.0,
+    "TVIMAX_LOGIT": 1.3862943611198906,
     "IIV_KOUT_CV": 0.3,
     "IIV_IC50_CV": 0.5,
     "PROP_ERR": 0.1

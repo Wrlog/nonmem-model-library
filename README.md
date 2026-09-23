@@ -13,17 +13,30 @@ python -m nmlib.build --check  # checks only
 pytest
 ```
 
-## The control streams have not been run
+## What is fitted, and what is not
 
-NONMEM is licensed software and was not available where this was built, so
-**every `.mod` file here is written but not executed**, and every figure on
-the dashboard is the simulation rather than an estimation result. Treat the
-streams as starting points to run yourself, not as fitted models.
+The `.mod` files are written for NONMEM, which is licensed and not available
+where this is built, so **they have not been executed in NONMEM**. They are
+checked statically instead — see [Static checks](#static-checks).
 
-What can be checked without NONMEM is checked, automatically, on every
-commit — see [Static checks](#static-checks). That catches the class of
-mistake that silently produces a plausible but wrong fit; it does not tell
-you the model converges.
+The models themselves *are* fitted. [`fit/fit_nlmixr.R`](fit/fit_nlmixr.R)
+estimates the same structures with [nlmixr2](https://nlmixr2.org), which is
+open source, and CI runs it on every push. Three of the five are fitted
+today — the two-compartment PK, the tumour growth model and the indirect
+response model — and each contributes to the dashboard:
+
+- **Goodness of fit**: observations against population and individual
+  predictions, CWRES against time and against prediction, with a binned
+  median so curvature is visible.
+- **A visual predictive check** from 200 simulated replicates, because GOF
+  plots can look tidy for a model that predicts the wrong spread.
+- **Estimates against the truth**, with the percentage difference shown and
+  anything beyond 15% flagged. This is the point of simulating: goodness of
+  fit cannot tell you whether estimation recovered the answer.
+
+The time-to-event and binary models are shown as simulation only for now;
+both are likelihood models and need a different set of diagnostics than the
+continuous three.
 
 ## The models
 

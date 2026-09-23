@@ -200,6 +200,7 @@ def estimates_vs_truth(fit: dict, truth: dict[str, float]) -> pd.DataFrame | Non
         "tvy0": ("TVY0", 1), "tvkl": ("TVKL", 1), "tvkd": ("TVKD", 1),
         "tvlam": ("TVLAMBDA", 1),
         "tvkin": ("TVKIN", 1), "tvkout": ("TVKOUT", 1), "tvic50": ("TVIC50", 1),
+        "logit.imax": ("TVIMAX_LOGIT", 1),
         "prop.err": ("PROP_ERR", 1),
     }
     rows = []
@@ -207,6 +208,10 @@ def estimates_vs_truth(fit: dict, truth: dict[str, float]) -> pd.DataFrame | Non
         name = str(r.get("parameter", "")).strip()
         key = alias.get(name.lower(), (None, 1))[0]
         true_value = truth.get(key) if key else None
+        # A column holding a mix of floats and None comes back from pandas as
+        # NaN, which formats as the string "nan" if it is not caught here.
+        if true_value is not None and true_value != true_value:
+            true_value = None
         # nlmixr2 reports the back-transformed value in "Back-transformed"
         # when the parameter was estimated on the log scale.
         value = None
@@ -214,10 +219,21 @@ def estimates_vs_truth(fit: dict, truth: dict[str, float]) -> pd.DataFrame | Non
             if col in est.columns and pd.notna(r.get(col)):
                 value = r.get(col)
                 break
+        # How far the estimate landed from the value the data was simulated
+        # from. Reporting this is the whole reason for simulating: a fit can
+        # look tidy and still not recover the parameters.
+        pct = None
+        try:
+            if true_value not in (None, 0) and value is not None:
+                pct = (float(value) - float(true_value)) / float(true_value) * 100
+        except (TypeError, ValueError):
+            pct = None
+
         rows.append({
             "parameter": name,
             "estimate": value,
             "rse_pct": r.get("%RSE") if "%RSE" in est.columns else None,
             "truth": true_value,
+            "pct_diff": pct,
         })
     return pd.DataFrame(rows)

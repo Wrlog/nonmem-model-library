@@ -41,7 +41,7 @@ read_nm <- function(path) {
   d
 }
 
-save_fit <- function(fit, key, started) {
+save_fit <- function(fit, key, started, method = "focei") {
   est <- as.data.frame(fit$parFixedDf)
   est$parameter <- rownames(est)
   write.csv(est, file.path(out_dir, paste0(key, "_estimates.csv")),
@@ -58,7 +58,7 @@ save_fit <- function(fit, key, started) {
     objective = tryCatch(as.numeric(fit$objDf$OBJF[1]), error = function(e) NA),
     message = tryCatch(as.character(fit$message), error = function(e) ""),
     seconds = round(as.numeric(difftime(Sys.time(), started, units = "secs")), 1),
-    method = "focei",
+    method = method,
     engine = paste0("nlmixr2 ", as.character(utils::packageVersion("nlmixr2")))
   )
   write_json(status, file.path(out_dir, paste0(key, "_status.json")),
@@ -170,19 +170,23 @@ idr_inhibition <- function() {
 # --------------------------------------------------------------------------
 
 jobs <- list(
-  list(key = "pk_2cmt_iv", model = pk_2cmt,
+  list(key = "pk_2cmt_iv", model = pk_2cmt, est = "focei",
        data = function() {
          d <- read_nm(file.path("data", "pk_2cmt_iv.csv"))
          d$CMT <- NULL          # single output, linCmt handles the dosing
          d
        }),
-  list(key = "tgi_claret", model = tgi_claret,
+  # SAEM for the tumour model: three random effects with 45-60% CV on nine
+  # observations per subject is exactly the case where FOCEi's linearisation
+  # struggles, and the first run of this library showed it -- the residual
+  # error came back three times its simulated value.
+  list(key = "tgi_claret", model = tgi_claret, est = "saem",
        data = function() {
          d <- read_nm(file.path("data", "tgi_claret.csv"))
          d$AMT <- 0; d$EVID <- 0
          d
        }),
-  list(key = "pkpd_idr_inhibition", model = idr_inhibition,
+  list(key = "pkpd_idr_inhibition", model = idr_inhibition, est = "focei",
        data = function() {
          d <- read_nm(file.path("data", "pkpd_idr_inhibition.csv"))
          # Dose records go to the central compartment, observations to the
@@ -198,9 +202,14 @@ for (job in jobs) {
   started <- Sys.time()
   ok <- tryCatch({
     dat <- job$data()
-    fit <- nlmixr2(job$model, dat, est = "focei",
-                   control = foceiControl(print = 0, maxOuterIterations = 200))
-    st <- save_fit(fit, job$key, started)
+    method <- if (is.null(job$est)) "focei" else job$est
+    control <- if (method == "saem") {
+      saemControl(print = 0, nBurn = 300, nEm = 400)
+    } else {
+      foceiControl(print = 0, maxOuterIterations = 200)
+    }
+    fit <- nlmixr2(job$model, dat, est = method, control = control)
+    st <- save_fit(fit, job$key, started, method)
     cat("  OFV", st$objective, "in", st$seconds, "s\n")
     TRUE
   }, error = function(e) {

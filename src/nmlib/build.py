@@ -255,17 +255,51 @@ def _diagnostics_html(root: Path, m: dict, df, info: dict) -> str:
     cmp_df = diagnostics.estimates_vs_truth(fit, info["truth"])
     if cmp_df is not None and not cmp_df.empty:
         rows = []
+        worst = 0.0
+        compared = 0
         for _, r in cmp_df.iterrows():
             rse = r["rse_pct"]
             rse_txt = "" if rse is None or rse != rse else f"{float(rse):.1f}%"
             truth_txt = "" if r["truth"] is None else f'{float(r["truth"]):g}'
-            est_txt = "" if r["estimate"] is None else html.escape(str(r["estimate"]))
+            est_val = r["estimate"]
+            est_txt = ""
+            if est_val is not None and est_val == est_val:
+                try:
+                    est_txt = f"{float(est_val):.4g}"
+                except (TypeError, ValueError):
+                    est_txt = html.escape(str(est_val))
+            pct = r["pct_diff"]
+            if pct is None or pct != pct:
+                pct_txt = ""
+            else:
+                compared += 1
+                worst = max(worst, abs(float(pct)))
+                cls = "fail" if abs(float(pct)) > 30 else (
+                    "warn" if abs(float(pct)) > 15 else "pass")
+                pct_txt = f'<span class="{cls}">{float(pct):+.0f}%</span>'
             rows.append(
                 f'<tr><td>{html.escape(str(r["parameter"]))}</td>'
-                f"<td>{est_txt}</td><td>{rse_txt}</td><td>{truth_txt}</td></tr>")
+                f"<td>{est_txt}</td><td>{rse_txt}</td>"
+                f"<td>{truth_txt}</td><td>{pct_txt}</td></tr>")
+
+        if compared:
+            if worst <= 15:
+                verdict = ('Every compared parameter is recovered within 15% '
+                           'of the value the data was simulated from.')
+            elif worst <= 30:
+                verdict = (f'Parameters are recovered to within {worst:.0f}% '
+                           'of their simulated values.')
+            else:
+                verdict = (f'One or more parameters are off by up to '
+                           f'{worst:.0f}%, which is the honest result for this '
+                           'design rather than something to hide: the '
+                           'variability is large and the sampling is sparse.')
+            blocks.append(f'<p class="problem">{verdict}</p>')
+
         blocks.append(
             "<table><thead><tr><th>Parameter</th><th>Estimate</th>"
-            "<th>RSE</th><th>Simulated from</th></tr></thead>"
+            "<th>RSE</th><th>Simulated from</th><th>Difference</th>"
+            "</tr></thead>"
             f'<tbody>{"".join(rows)}</tbody></table>')
 
     return "".join(blocks)
