@@ -41,10 +41,21 @@ def _strip_comments(text: str) -> str:
     return "\n".join(line.split(";")[0] for line in text.splitlines())
 
 
+def _record_pattern(name: str) -> str:
+    """Match $NAME and any abbreviation of it down to three letters.
+
+    NONMEM reads `$EST`, `$ESTIM` and `$ESTIMATION` as the same record, and
+    control streams in the wild use all three; matching only the full name
+    would report a stream with `$EST` as having no estimation step at all.
+    """
+    head, tail = name[:3], name[3:]
+    optional = "".join(f"(?:{c}" for c in tail) + ")?" * len(tail)
+    return rf"^[ \t]*\${head}{optional}\b(.*?)(?=^[ \t]*\$[A-Z]|\Z)"
+
+
 def _record(text: str, name: str) -> str:
     """Return the body of a $RECORD, or '' if absent."""
-    pattern = rf"^\${name}\b(.*?)(?=^\$[A-Z]|\Z)"
-    m = re.search(pattern, text, re.S | re.M | re.I)
+    m = re.search(_record_pattern(name), text, re.S | re.M | re.I)
     return m.group(1) if m else ""
 
 
@@ -54,8 +65,8 @@ def _records(text: str, name: str) -> list[str]:
     $OMEGA in particular is routinely split across records -- one per BLOCK,
     or one per occasion with SAME -- and reading only the first undercounts.
     """
-    pattern = rf"^\${name}\b(.*?)(?=^\$[A-Z]|\Z)"
-    return [m.group(1) for m in re.finditer(pattern, text, re.S | re.M | re.I)]
+    return [m.group(1) for m in
+            re.finditer(_record_pattern(name), text, re.S | re.M | re.I)]
 
 
 def _count_random_effects(bodies: list[str]) -> int:
@@ -90,6 +101,20 @@ def _count_params(body: str) -> int:
         rest = rest.replace(group, " ", 1)
     n += len(re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", rest))
     return n
+
+
+def count_compartments(model_body: str) -> int:
+    """Compartments declared in $MODEL.
+
+    NCOMPARTMENTS says so outright when present. Otherwise every COMP counts,
+    whatever follows it: `COMP=(CENTRAL)`, `COMP=CENTRAL`, `COMP (CENTRAL)`
+    and a bare `COMP=` with the name left to a comment are all one
+    compartment to NONMEM, as is the shorter `COM`.
+    """
+    stated = re.search(r"\bNCOMP\w*\s*=\s*(\d+)", model_body, re.I)
+    if stated:
+        return int(stated.group(1))
+    return len(re.findall(r"\bCOMP?\b", model_body, re.I))
 
 
 def _bounds(body: str) -> list[tuple[float | None, float, float | None]]:
@@ -150,6 +175,21 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
         if len(df) == 0:
             res.errors.append("data file is empty")
 
+    structural = check_text(raw, res.model)
+    res.errors += structural.errors
+    res.warnings += structural.warnings
+    return res
+
+
+def check_text(raw: str, name: str) -> CheckResult:
+    """Every check that can be made from the control stream alone.
+
+    This is what can be run on a stream whose dataset is not to hand -- the
+    published models catalogued alongside the library ship without theirs.
+    """
+    text = _strip_comments(raw)
+    res = CheckResult(model=name)
+
     # --- parameter references --------------------------------------------
     code = "\n".join(_record(text, r) for r in
                      ("PK", "PRED", "ERROR", "DES", "MIX", "AES"))
@@ -188,8 +228,7 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
                     f"upper bound {up}")
 
     # --- compartments ------------------------------------------------------
-    model_body = _record(text, "MODEL")
-    n_comp = len(re.findall(r"COMP\s*=?\s*\(", model_body, re.I))
+    n_comp = count_compartments(_record(text, "MODEL"))
     if n_comp:
         used_comp = {int(n) for n in re.findall(r"DADT\((\d+)\)", code)}
         used_comp |= {int(n) for n in re.findall(r"A_0\((\d+)\)", code)}
@@ -204,17 +243,24 @@ def check_control_stream(mod_path: Path, data_dir: Path) -> CheckResult:
                 f"$DES has no DADT for compartment(s) {sorted(missing_ode)}")
 
     # --- likelihood models need LIKELIHOOD on $ESTIMATION -----------------
-    est = _record(text, "ESTIMATION")
+    est = "\n".join(_records(text, "ESTIMATION")).upper()
+    # LIKE is NONMEM's own abbreviation, and -2LL states the same thing with
+    # Y as minus twice the log-likelihood rather than the likelihood.
+    on_likelihood = bool(re.search(r"\bLIKE|-2LL", est))
     defines_y_by_branch = bool(re.search(r"IF\s*\(\s*DV\s*\.EQ\.", code, re.I))
-    if defines_y_by_branch and "LIKELIHOOD" not in est.upper():
+    # F_FLAG=1 declares the likelihood record by record, which is how a
+    # stream mixes it with continuous data; LIKE on $ESTIMATION is then not
+    # needed and would be wrong for the continuous records.
+    per_record = bool(re.search(r"\bF_FLAG\s*=", code, re.I))
+    if defines_y_by_branch and not (on_likelihood or per_record):
         res.errors.append(
             "Y is defined branch-wise on DV, which means the model is fitted "
             "on the likelihood, but $ESTIMATION does not say LIKELIHOOD")
-    if "LIKELIHOOD" in est.upper() and _record(text, "SIGMA").strip():
+    if on_likelihood and _record(text, "SIGMA").strip():
         res.warnings.append(
             "$SIGMA is declared on a LIKELIHOOD model; residual error has no "
             "role there")
-    if defines_y_by_branch and "LAPLACE" not in est.upper():
+    if defines_y_by_branch and "LAPLACE" not in est:
         res.warnings.append(
             "likelihood models are normally fitted with LAPLACE")
 

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import diagnostics, eda, figures
+from . import catalogue, diagnostics, eda, figures
 from .check import check_all
 from .estimate import fit_all
 from .simulate import SIMULATORS
@@ -259,7 +259,44 @@ footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--rule);
  font-size:.85rem;color:var(--ink-3)}
 a{color:var(--blue-ink)}
 
+.bars{list-style:none;margin:6px 0 4px;padding:0;display:grid;gap:2px}
+.bar{display:grid;grid-template-columns:minmax(0,15rem) 1fr 2.5rem;gap:12px;
+ align-items:center;width:100%;font:inherit;font-size:.86rem;text-align:left;
+ color:var(--ink-2);background:none;border:0;border-radius:8px;padding:5px 8px;
+ cursor:pointer}
+.bar:hover{background:var(--sunken)}
+.bar[aria-pressed="true"]{background:var(--blue-bg);color:var(--blue-ink);
+ font-weight:600}
+.bar:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.bar .track{height:10px;display:block}
+.bar .fill{display:block;height:100%;background:var(--blue);
+ border-radius:0 4px 4px 0;min-width:4px}
+.bar .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 6px}
+.filters input,.filters select{font:inherit;font-size:.88rem;color:var(--ink);
+ background:var(--surface);border:1px solid var(--rule);border-radius:8px;
+ padding:7px 10px;min-width:0}
+.filters input{flex:1 1 16rem}
+.filters input:focus-visible,.filters select:focus-visible{
+ outline:2px solid var(--blue);outline-offset:1px}
+.count{font-size:.86rem;color:var(--ink-3);margin:0 0 4px}
+.scroll{overflow-x:auto;margin:0 -4px;padding:0 4px}
+table.catalogue{min-width:760px}
+table.catalogue td,table.catalogue th{text-align:left;vertical-align:top}
+table.catalogue td.num,table.catalogue th.num{text-align:right;white-space:nowrap}
+table.catalogue tr[hidden]{display:none}
+.entry a{color:var(--ink);font-weight:560;text-decoration:none}
+.entry a:hover{text-decoration:underline}
+.entry .topics{display:block;font-size:.8rem;color:var(--ink-3);margin-top:2px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:.74rem;line-height:1.3;background:var(--sunken);color:var(--ink-2);
+ border-radius:999px;padding:2px 8px;white-space:nowrap}
+td details{margin:0}
+td summary{font-size:.84rem;font-weight:600}
+td ul{margin:6px 0 0;padding-left:18px;font-size:.8rem;min-width:14rem}
+
 @media (max-width:640px){
+ .bar{grid-template-columns:minmax(0,9.5rem) 1fr 2rem;gap:8px}
  .wrap{padding:24px 16px 64px}h1{font-size:1.52rem}h2{font-size:1.2rem}
  .card{padding:18px 16px;border-radius:12px}
  .tile .value{font-size:1.7rem}
@@ -291,6 +328,30 @@ SCRIPT = """
   document.documentElement.setAttribute('data-theme',
    cur()==='dark'?'light':'dark');paint();});
  paint();show('all');
+
+ // The reference collection: search, area and technique narrow the table
+ // together. The technique bars and the technique menu are one control.
+ var q=document.getElementById('cat-q');
+ if(!q)return;
+ var area=document.getElementById('cat-area');
+ var tech=document.getElementById('cat-tech');
+ var bars=[].slice.call(document.querySelectorAll('.bar[data-tech]'));
+ var rows=[].slice.call(document.querySelectorAll('table.catalogue tbody tr'));
+ var shown=document.getElementById('cat-shown');
+ function filter(){
+  var text=q.value.trim().toLowerCase(),a=area.value,t=tech.value,n=0;
+  rows.forEach(function(r){
+   var ok=(!text||r.dataset.text.indexOf(text)>=0)&&(!a||r.dataset.area===a)
+    &&(!t||r.dataset.tech.split('|').indexOf(t)>=0);
+   r.hidden=!ok;if(ok)n++;});
+  shown.textContent=String(n);
+  bars.forEach(function(b){
+   b.setAttribute('aria-pressed',String(b.dataset.tech===t));});}
+ bars.forEach(function(b){b.addEventListener('click',function(){
+  tech.value=tech.value===b.dataset.tech?'':b.dataset.tech;filter();});});
+ [q,area,tech].forEach(function(el){
+  el.addEventListener('input',filter);el.addEventListener('change',filter);});
+ filter();
 })();
 """
 
@@ -677,6 +738,136 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
             + "".join(body) + "</section>")
 
 
+def _check_cell(check: dict) -> str:
+    errors, notes = check["errors"], check["notes"]
+    if not errors and not notes:
+        return '<span class="pass">clean</span>'
+    if errors:
+        label = (f'<span class="fail">{len(errors)} flag'
+                 f'{"s" if len(errors) != 1 else ""}</span>')
+    else:
+        label = (f'<span class="warn">{len(notes)} note'
+                 f'{"s" if len(notes) != 1 else ""}</span>')
+    items = "".join(f"<li>{html.escape(m)}</li>" for m in errors + notes)
+    return f"<details><summary>{label}</summary><ul>{items}</ul></details>"
+
+
+def _flag_summary(entries: list[dict], flagged: int) -> str:
+    if not flagged:
+        return "No stream carries a static-check flag."
+    errors = [m for e in entries for m in e["check"]["errors"]]
+    lead = (f"{flagged} stream{'s carry' if flagged != 1 else ' carries'} a "
+            "static-check flag")
+    if all(m.startswith("$DES has no DADT") for m in errors):
+        return (f"{lead}, {'each' if flagged != 1 else 'and it is'} a "
+                "compartment declared in $MODEL that no equation in $DES "
+                "assigns &mdash; usually a leftover, and NONMEM runs it "
+                "without complaint.")
+    return f"{lead}; open the Checks column for what was found."
+
+
+def _collection_section(entries: list[dict]) -> str:
+    """The published models, catalogued from their code but not showing it.
+
+    The streams live in a private repository and are not reproduced here;
+    everything in this section is read off them by `nmlib.catalogue`, and
+    the titles link through for anyone with access.
+    """
+    n = len(entries)
+    topics = sorted({t for e in entries for t in e["topics"]})
+    areas = sorted({e["area"] for e in entries})
+    ode = sum(e["ode"] for e in entries)
+    evaluation = sum(e["evaluation_only"] for e in entries)
+    flagged = sum(bool(e["check"]["errors"]) for e in entries)
+    counts = catalogue.technique_counts(entries)
+
+    tiles = [
+        _tile(str(n), "published control streams"),
+        _tile(str(len(topics)), "topics they are filed under"),
+        _tile(f"{ode / n * 100:.0f}%", "solved as differential equations"),
+        _tile(str(evaluation), "shared as an evaluation of fixed estimates",
+              f"of {n}"),
+    ]
+
+    top = counts[0][1] if counts else 1
+    bars = "".join(
+        f'<li><button class="bar" data-tech="{html.escape(name)}" '
+        f'aria-pressed="false" title="{count} of {n} streams">'
+        f"<span>{html.escape(name)}</span>"
+        f'<span class="track"><span class="fill" '
+        f'style="width:{count / top * 100:.1f}%"></span></span>'
+        f'<span class="n">{count}</span></button></li>'
+        for name, count in counts)
+
+    area_opts = "".join(f'<option value="{html.escape(a)}">{html.escape(a)}'
+                        "</option>" for a in areas)
+    tech_opts = "".join(f'<option value="{html.escape(t)}">{html.escape(t)}'
+                        "</option>" for t, _ in counts)
+
+    rows = []
+    for e in entries:
+        topics_txt = ", ".join(e["topics"])
+        structure = html.escape(e["structure"])
+        if e["ode"] and e["structure"] != "$PRED":
+            structure += " &middot; $DES"
+        if e["compartments"]:
+            structure += (f'<span class="unit"> &middot; {e["compartments"]} '
+                          f'cmt</span>')
+        method = html.escape(e["estimation"])
+        if e["evaluation_only"]:
+            method += '<span class="unit"> &middot; evaluation only</span>'
+        chips = "".join(f'<span class="chip">{html.escape(t)}</span>'
+                        for t in e["techniques"])
+        search = f'{e["title"]} {topics_txt} {e["area"]}'.lower()
+        rows.append(
+            f'<tr data-area="{html.escape(e["area"])}" '
+            f'data-tech="{html.escape("|".join(e["techniques"]))}" '
+            f'data-text="{html.escape(search)}">'
+            f'<td class="entry"><a href="{html.escape(catalogue.link(e))}">'
+            f'{html.escape(e["title"])}</a>'
+            f'<span class="topics">{html.escape(topics_txt)}</span></td>'
+            f"<td>{structure}</td><td>{method}</td>"
+            f'<td class="num">{e["thetas"]} / {e["etas"]} / {e["epsilons"]}</td>'
+            f'<td><div class="chips">{chips}</div></td>'
+            f"<td>{_check_cell(e['check'])}</td></tr>")
+
+    return f"""<section class="model card" data-key="collection">
+<p class="family" style="color:var(--blue-ink)">Reference collection</p>
+<h2>{n} published models, read but not reproduced</h2>
+<p class="why">Control streams collected from published analyses and filed by
+topic. The five models above are written for this library; these are other
+people&rsquo;s, kept in a private repository. What is shown is what can be read
+off each stream mechanically &mdash; structure, estimation, the techniques it
+uses, and what the same static checks make of it &mdash; so the collection can be
+searched by technique without opening a file. Titles link to the stream for
+anyone with access.</p>
+<div class="tiles">{"".join(tiles)}</div>
+
+<h3>Techniques in use</h3>
+<p class="status">Detected from the code, not from the file name, so a technique
+written in an unusual way can be missed. Select one to list the streams that
+use it.</p>
+<ul class="bars">{bars}</ul>
+
+<h3>Browse</h3>
+<div class="filters">
+ <input id="cat-q" type="search" placeholder="Search titles and topics"
+  aria-label="Search titles and topics">
+ <select id="cat-area" aria-label="Area"><option value="">All areas</option>
+  {area_opts}</select>
+ <select id="cat-tech" aria-label="Technique"><option value="">Any technique</option>
+  {tech_opts}</select>
+</div>
+<p class="count"><span id="cat-shown">{n}</span> of {n} shown.
+Parameters are THETA / ETA / EPS as declared. {_flag_summary(entries, flagged)}</p>
+<div class="scroll"><table class="catalogue">
+<thead><tr><th>Model</th><th>Structure</th><th>Estimation</th>
+<th class="num">&theta; / &eta; / &epsilon;</th><th>Techniques</th>
+<th>Checks</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+</section>"""
+
+
 def build_site(root: Path, out: Path, summary: dict) -> Path:
     checks = {c.model: c for c in check_all(root / "models", root / "data")}
     results_dir = root / "fit" / "results"
@@ -698,6 +889,10 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
     for m in CATALOGUE:
         tabs.append(f'<button class="tab" data-target="{m["key"]}" '
                     f'aria-pressed="false">{html.escape(m["family"])}</button>')
+    collection = catalogue.load(root)
+    if collection:
+        tabs.append('<button class="tab" data-target="collection" '
+                    'aria-pressed="false">Reference collection</button>')
     parts.append('<div class="controls">' + "".join(tabs)
                  + '<div class="spacer"></div>'
                  + '<button class="tab" id="theme" aria-pressed="false">'
@@ -732,6 +927,8 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
 
     for m in CATALOGUE:
         parts.append(_model_section(root, m, summary[m["key"]], checks))
+    if collection:
+        parts.append(_collection_section(collection))
 
     generated = dt.datetime.now().strftime("%d %B %Y")
     parts.append(f"""<footer>

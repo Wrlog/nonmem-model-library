@@ -147,6 +147,25 @@ The checker is itself tested by breaking a stream on purpose — a reordered
 `LIKELIHOOD` — and asserting it complains. A linter nobody has seen fail is
 not known to work.
 
+## Reference collection
+
+The dashboard also catalogues a collection of 88 published control streams,
+filed by topic, whose code is kept in a private repository. The page shows
+what [`src/nmlib/catalogue.py`](src/nmlib/catalogue.py) reads off each
+stream — structure, estimation method, the techniques it uses and what the
+static checks above make of it — and nothing from inside the stream itself.
+The catalogue is regenerated from a local copy of the private repository:
+
+```bash
+python -m nmlib.catalogue "path/to/NON code collection"   # writes catalogue/collection.json
+```
+
+Techniques are detected from the code rather than from file names, so M3 is
+a normal CDF taken at a limit of quantification, not any use of `PHI`, and
+target-mediated disposition needs binding and turnover terms, not just a
+saturable one. The tests hold the committed JSON to its list of allowed
+fields.
+
 ## Layout
 
 | Path | Contents |
@@ -157,6 +176,8 @@ not known to work.
 | `src/nmlib/simulate.py` | One simulator per model |
 | `src/nmlib/estimate.py` | Population estimation by adaptive Gauss-Hermite quadrature |
 | `src/nmlib/check.py` | The static checks |
+| `src/nmlib/catalogue.py` | Catalogues the private reference collection without its code |
+| `catalogue/` | The generated catalogue the dashboard reads |
 | `src/nmlib/theme.py` | The palette, type scale and spacing every figure uses |
 | `src/nmlib/figures.py` | One figure per model, drawn from the datasets |
 | `src/nmlib/diagnostics.py` | Goodness of fit, predictive checks, parameter recovery |
