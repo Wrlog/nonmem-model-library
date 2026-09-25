@@ -1,10 +1,11 @@
 # NONMEM model library
 
-Control streams for the model types that come up repeatedly in drug
-development. Each one is fitted here, diagnosed, and tested against the
-simpler model it would have to beat to be worth writing.
+Control streams for five model types that come up a lot in drug development.
+Each one is fitted here, run through the usual diagnostics, and compared with
+the simpler model it has to beat. All the data is simulated; nothing in the
+repo is patient data.
 
-**[View the dashboard](https://wrlog.github.io/nonmem-model-library/)**
+[View the dashboard](https://wrlog.github.io/nonmem-model-library/)
 
 ```bash
 pip install -e ".[dev]"
@@ -14,157 +15,131 @@ python -m nmlib.build --no-fit # rebuild the page from existing fit results
 pytest
 ```
 
-One command does everything, in one language, with no licence: the datasets
-are simulated, all five models are estimated, the control streams are
-checked, and every figure is drawn from those results. The whole library
-fits in about three minutes on one core.
+The build is all Python and needs no NONMEM licence. It simulates the
+datasets, fits all five models, checks the control streams and draws the
+figures, in about three minutes on one core.
 
-## What is fitted
+## Estimation
 
-All five models are estimated back from their own simulated data by
-[`src/nmlib/estimate.py`](src/nmlib/estimate.py), which implements
-**adaptive Gauss-Hermite quadrature**: the random effects are integrated out
-on a grid centred on each subject's posterior mode and scaled by the
-curvature there. With a single node that reduces exactly to the Laplace
-approximation, which is what NONMEM's `LAPLACE` does; with more nodes it
-converges on the true integral, which is why the binary model — where
-Laplace is known to be biased — is run with fifteen.
+[`src/nmlib/estimate.py`](src/nmlib/estimate.py) estimates each model from
+its own simulated data using adaptive Gauss-Hermite quadrature. The random
+effects are integrated out on a grid centred on each subject's posterior mode
+and scaled by the curvature there. With one node this is exactly the Laplace
+approximation (what NONMEM's `LAPLACE` does), and with more nodes it converges
+on the true integral. The binary model, where Laplace is known to be biased,
+uses fifteen.
 
-Starting values are deliberately displaced from the values used to simulate,
-so "the estimates recover the truth" means the optimiser found it rather
-than started on it.
+Starting values are offset from the simulation values, so the optimiser has
+to find the truth rather than start on it.
 
-Each model contributes the following to the dashboard, and they answer
-different questions in a deliberate order:
+For each model the dashboard shows:
 
-- **Does the structure earn its place?** Recovery says estimation found the
-  parameters; it does not say they were worth having. Every model here
-  exists because of one feature that separates it from an obvious simpler
-  alternative — a second compartment, the resistance term, acting on
-  turnover rather than directly, the Weibull shape, the between-subject
-  variance. Each is switched off, everything else re-estimated, and the
-  increase in objective function is what that feature was buying. Where the
-  simpler model is nested the difference is a likelihood ratio statistic;
-  where it is a different structure with the same parameter count (direct
-  effect against indirect response) there is no p-value to quote and the
-  page says so. This is the question the page leads with, because it is the
-  one that decides whether a model should exist.
-- **Estimates**, each with a confidence interval, an %RSE, and — since the
-  data is simulated — the value it was generated from beside it.
-- **Shrinkage**, stated before the plots it qualifies. An empirical Bayes
-  estimate is a compromise between a subject's own data and the population,
-  so where a subject carries little information the estimate collapses
-  toward the population value. At high shrinkage the individual-prediction
-  panel looks excellent for the wrong reason.
-- **Goodness of fit** — observations against population and individual
+- A test of the one feature that separates it from an obvious simpler
+  alternative: a second compartment, the resistance term, acting on turnover
+  rather than directly, the Weibull shape, the between-subject variance. The
+  build switches the feature off, re-estimates everything else and reports
+  the increase in objective function. For nested models that's a likelihood
+  ratio statistic. Direct effect against indirect response has the same
+  parameter count, so there's no p-value to quote, and the page says so. The
+  page leads with this, because recovering the parameters doesn't tell you
+  they were worth having.
+- Estimates with a confidence interval, %RSE and the simulated value.
+- Shrinkage, shown before the plots it affects. Empirical Bayes estimates
+  for subjects with little information get pulled toward the population
+  value, and at high shrinkage the individual-prediction panel looks good for
+  the wrong reason.
+- Goodness of fit: observations against population and individual
   predictions, and conditional weighted residuals against time and against
-  prediction, with a binned median so curvature is visible.
-- **Individual fits** for a sample of subjects spanning the range of the
-  data, because everything else on the page averages over exactly the thing
-  a mixed effects model exists to describe.
-- **A visual predictive check** from 500 replicates simulated from the
-  fitted model, because goodness-of-fit plots can look tidy for a model that
-  predicts the wrong spread.
+  prediction, with a binned median so any curvature shows up.
+- Individual fits for a sample of subjects across the range of the data,
+  since everything else on the page averages over subjects.
+- A visual predictive check from 500 replicates simulated from the fitted
+  model, since goodness-of-fit plots can look tidy for a model that predicts
+  the wrong spread.
 
-The estimator is tested against independent methods rather than against
-itself: its marginal likelihood is checked against brute-force numerical
-integration of the same integral, and its indirect response solver against
-an adaptive ODE integrator on the same equations. See
-[`tests/test_estimation.py`](tests/test_estimation.py).
+[`tests/test_estimation.py`](tests/test_estimation.py) checks the marginal
+likelihood against brute-force numerical integration and the indirect
+response solver against an adaptive ODE integrator on the same equations.
 
-## The models
+## Models
 
 | Model | Family | Why it is in the library |
 | --- | --- | --- |
 | [`pk_2cmt_iv.mod`](models/pk_2cmt_iv.mod) | Pharmacokinetics | The structural model most exposure work rests on. Allometric weight, IIV on CL and V1, proportional error. `ADVAN3 TRANS4`, closed form, no ODEs to solve |
-| [`tgi_claret.mod`](models/tgi_claret.mod) | Oncology | Claret tumour growth inhibition: exponential growth with a kill term that decays. The decay term is the point — without it the model cannot produce regrowth on treatment |
-| [`pkpd_idr_inhibition.mod`](models/pkpd_idr_inhibition.mod) | PK/PD | Dayneka and Jusko model I. The drug acts on turnover, so response lags exposure and washout is set by `KOUT`, not by the drug's half-life |
+| [`tgi_claret.mod`](models/tgi_claret.mod) | Oncology | Claret tumour growth inhibition: exponential growth with a kill term that decays. Without the decay term the model can't produce regrowth on treatment |
+| [`pkpd_idr_inhibition.mod`](models/pkpd_idr_inhibition.mod) | PK/PD | Dayneka and Jusko model I. The drug acts on turnover, so response lags exposure and washout is set by `KOUT` rather than the drug's half-life |
 | [`tte_weibull.mod`](models/tte_weibull.mod) | Survival | Time to first event with a Weibull baseline hazard and exposure on the hazard. Fitted on the likelihood: censored records contribute the survivor function, events contribute survivor × hazard |
 | [`logistic_binary.mod`](models/logistic_binary.mod) | Exposure–response | Binary endpoint with IIV on the logit. `$PRED`, and again a likelihood rather than a residual |
 
-Each `.mod` carries comments explaining the structure and why it is written
-that way, not just what each line does.
+Comments in each `.mod` explain the structure and why it's written that way.
 
 ## Examples
 
-[`examples/`](examples/) holds control streams for techniques that do not
-need a simulator of their own to be useful: M3 for BLQ data, transit
-absorption, a covariate model with log-transformed both sides, inter-occasion
-variability, sequential PK/PD, and external validation of a published model.
-They are templates without datasets. The static checks run on them in CI, and
-each was run in NONMEM against simulated data before it was added. See
-[`examples/README.md`](examples/README.md).
+[`examples/`](examples/) has template control streams, without datasets,
+for M3 BLQ handling, transit absorption, a covariate model with
+log-transform-both-sides, inter-occasion variability, sequential PK/PD and
+external validation of a published model. Each was run in NONMEM against
+simulated data before it was added, and CI runs the static checks on them.
+See [`examples/README.md`](examples/README.md).
 
-## The data is simulated
+## Data
 
 Every dataset in `data/` is generated by
-[`src/nmlib/simulate.py`](src/nmlib/simulate.py) from parameters written out
-beside it in `<model>.truth.json`. Nothing here is patient data, and none is
-needed.
+[`src/nmlib/simulate.py`](src/nmlib/simulate.py) from parameters saved next
+to it in `<model>.truth.json`, so each estimate can be compared with its true
+value. Two of the designs are what make the model work:
 
-Simulating rather than shipping a real dataset has a practical payoff: the
-true parameter values are known, so every estimate can be read beside the
-value it was trying to find.
+- The binary endpoint is scored at six visits per subject. With one record
+  per subject the between-subject variance on the logit isn't identifiable.
+  A single Bernoulli draw can't separate a subject who tends to respond from
+  one who happened to, and `OMEGA` collapses to zero however it's estimated.
+- The indirect response model is dosed daily for a week and then followed
+  for three more, and the biomarker's half-life is about five times the
+  drug's. Without that gap a direct effect model fits just as well.
 
-It also means the *design* is part of what the library has to get right, and
-in two places that is the whole lesson:
-
-- The **binary endpoint is scored at six visits per subject**. With one
-  record per subject, the between-subject variance on the logit is not
-  identifiable at all — a single Bernoulli draw cannot separate a subject
-  who is prone to respond from one who happened to respond, and `OMEGA`
-  collapses to zero however it is estimated.
-- The **indirect response model is dosed daily for a week and then
-  followed for three**, with a biomarker whose half-life is about five times
-  the drug's. Without that separation between the two clocks, a direct
-  effect model fits the same data just as well and there is nothing for the
-  indirect structure to earn.
-
-The simulators are tested against the equations they claim to implement —
-the closed-form PK against numerical integration of the same ODEs, the
-indirect response baseline against its steady state `KIN/KOUT`, and the
-event times against the Weibull survivor function at three quantiles.
+The simulator tests compare the closed-form PK with numerical integration of
+the same ODEs, the indirect response baseline with its steady state
+`KIN/KOUT`, and the event times with the Weibull survivor function at three
+quantiles.
 
 ## Static checks
 
-`python -m nmlib.build --check` runs these against every stream:
+`python -m nmlib.build --check` runs these on every stream:
 
-- **`$INPUT` against the data columns, in order.** With `IGNORE=@` NONMEM
-  skips the header and reads positionally, so a `$INPUT` that is merely a
-  permutation of the header loads the wrong column into the wrong variable
-  and still runs. This is the single most valuable check here.
-- **Parameter references.** Every `THETA(n)`, `ETA(n)` and `EPS(n)` used must
-  be declared, and anything declared but never referenced is flagged.
-- **Initial estimates inside their own bounds.**
-- **Compartments** used in `$DES` and `A_0` must exist in `$MODEL`, and every
-  declared compartment must have a `DADT`.
-- **Likelihood models.** A stream that defines `Y` branch-wise on `DV` is
-  being fitted on the likelihood, so `$ESTIMATION` must say `LIKELIHOOD`;
-  the check also notes a stray `$SIGMA` on such a model.
+- `$INPUT` against the data columns, in order. With `IGNORE=@` NONMEM skips
+  the header and reads by position, so a `$INPUT` that is just a permutation
+  of the header loads the wrong column into the wrong variable and still
+  runs. This is the most useful check here.
+- Parameter references. Every `THETA(n)`, `ETA(n)` and `EPS(n)` used must be
+  declared, and anything declared but never referenced is flagged.
+- Initial estimates inside their own bounds.
+- Compartments used in `$DES` and `A_0` must exist in `$MODEL`, and every
+  declared compartment needs a `DADT`.
+- Likelihood models. A stream that defines `Y` branch-wise on `DV` is fitted
+  on the likelihood, so `$ESTIMATION` must say `LIKELIHOOD`. The check also
+  notes a stray `$SIGMA` on such a model.
 
-The checker is itself tested by breaking a stream on purpose — a reordered
-`$INPUT`, an undeclared `ETA`, an out-of-bounds initial estimate, a missing
-`LIKELIHOOD` — and asserting it complains. A linter nobody has seen fail is
-not known to work.
+The checker's tests break a stream on purpose (a reordered `$INPUT`, an
+undeclared `ETA`, an out-of-bounds initial estimate, a missing `LIKELIHOOD`)
+and assert that it complains.
 
 ## Reference collection
 
-The dashboard also catalogues a collection of 88 published control streams,
-filed by topic, whose code is kept in a private repository. The page shows
-what [`src/nmlib/catalogue.py`](src/nmlib/catalogue.py) reads off each
-stream — structure, estimation method, the techniques it uses and what the
-static checks above make of it — and nothing from inside the stream itself.
-The catalogue is regenerated from a local copy of the private repository:
+The dashboard also catalogues 88 published control streams, filed by topic,
+whose code is in a private repository. The page shows only what
+[`src/nmlib/catalogue.py`](src/nmlib/catalogue.py) reads off each stream:
+structure, estimation method, techniques used and the static check results.
+To regenerate it from a local copy of the private repository:
 
 ```bash
 python -m nmlib.catalogue "path/to/NON code collection"   # writes catalogue/collection.json
 ```
 
-Techniques are detected from the code rather than from file names, so M3 is
-a normal CDF taken at a limit of quantification, not any use of `PHI`, and
-target-mediated disposition needs binding and turnover terms, not just a
-saturable one. The tests hold the committed JSON to its list of allowed
-fields.
+Techniques are detected from the code rather than file names. M3 has to be a
+normal CDF taken at a limit of quantification (any use of `PHI` isn't
+enough), and target-mediated disposition needs binding and turnover terms; a
+saturable term on its own doesn't count. The tests restrict the committed
+JSON to a list of allowed fields.
 
 ## Layout
 
@@ -186,4 +161,4 @@ fields.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

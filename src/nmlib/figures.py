@@ -203,7 +203,7 @@ def tgi_claret(df: pd.DataFrame, theme: Theme) -> bytes:
     ax.set_ylabel("Tumour size, relative to baseline")
     title_block(ax, theme, "Tumour size against each subject's own baseline",
                 "The high-exposure arm shrinks, then regrows while treatment "
-                "continues - that turn is the resistance term, not noise")
+                "continues: that turn is the resistance term")
     _headroom(ax, 0.22)
     _end_labels(ax, theme, ends)
     legend(ax, theme, loc="upper left")
@@ -273,7 +273,7 @@ def pkpd_idr_inhibition(df: pd.DataFrame, theme: Theme,
                  textcoords="offset points", fontsize=SIZE_NOTE,
                  color=theme.ink_3, va="top")
 
-    title_block(top, theme, "Response lags exposure, and leaves on its own clock",
+    title_block(top, theme, "Response lags exposure and recovers at its own rate",
                 "Concentration reaches steady state within days; the "
                 "biomarker is still falling when dosing stops, and still "
                 "recovering weeks later")

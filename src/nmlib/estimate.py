@@ -897,16 +897,18 @@ COMPARISONS = {
     "tgi_claret": {
         "feature": "The resistance term LAMBDA",
         "against": "a plain kill model, with no loss of drug effect",
-        "question": "Without it the model cannot regrow a tumour while "
-                    "treatment continues. Is that shape actually in the data?",
+        "question": "Without the resistance term the model can't regrow a "
+                    "tumour while treatment continues. Does the data show "
+                    "regrowth?",
         "fix": {3: float(np.log(1e-8))},          # LAMBDA -> 0
         "boundary": True,
     },
     "pkpd_idr_inhibition": {
         "feature": "Acting on turnover rather than on the biomarker",
         "against": "a direct effect model",
-        "question": "A direct model has the response track the concentration "
-                    "exactly. Does the lag earn the extra structure?",
+        "question": "In a direct model the response tracks concentration "
+                    "exactly. Is there enough lag in the data to justify the "
+                    "indirect structure?",
         "alternative": IDRDirect,
         "df": 0,                                   # same parameter count
         "boundary": False,
@@ -922,8 +924,8 @@ COMPARISONS = {
     "logistic_binary": {
         "feature": "Between-subject variability on the logit",
         "against": "plain logistic regression, every subject alike",
-        "question": "Six visits per subject is what makes this estimable. "
-                    "Is there really variation between subjects to find?",
+        "question": "Six visits per subject make this estimable. Is there "
+                    "really variation between subjects?",
         "fix": {2: float(np.log(0.02))},           # OMEGA -> ~0
         "boundary": True,
     },

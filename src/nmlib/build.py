@@ -4,10 +4,10 @@
     python -m nmlib.build --check    # static checks only, non-zero on failure
     python -m nmlib.build --no-fit   # skip estimation and reuse fit/results/
 
-Everything the page shows is produced by this one command: the datasets are
-simulated here, the models are estimated here, and every figure is drawn
-here from those results. There is no step that has to be run somewhere else
-and no artefact checked in that the build cannot reproduce.
+Everything on the page comes from this one command: it simulates the
+datasets, estimates the models and draws every figure from the results.
+Nothing has to be run anywhere else, and the build can reproduce everything
+that is checked in.
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ CATALOGUE = [
         "why": "The structural PK model most exposure work rests on. "
                "Allometric weight on clearance and volume, between-subject "
                "variability on CL and V1, proportional residual error.",
-        "reads": "ADVAN3 TRANS4 - a closed-form two-compartment model, so no "
-                 "differential equations are solved and the run is fast.",
+        "reads": "ADVAN3 TRANS4: a closed-form two-compartment model, so there "
+                 "are no differential equations to solve and the run is fast.",
     },
     {
         "key": "tgi_claret",
@@ -79,9 +79,9 @@ CATALOGUE = [
         "y_label": "Tumour size (mm)",
         "x_label": "Time (days)",
         "why": "Exponential growth with a drug kill term that decays over "
-               "time. The decay is the point: without it the model cannot "
-               "produce regrowth while treatment continues, which is what is "
-               "seen in practice and what drives survival predictions.",
+               "time. Without the decay the model can't produce regrowth "
+               "while treatment continues, which is what's seen in practice "
+               "and what drives survival predictions.",
         "reads": "ADVAN13 with $DES. The resistance term LAMBDA is what "
                  "separates this from a plain kill model.",
     },
@@ -93,14 +93,14 @@ CATALOGUE = [
         "y_label": "Biomarker (units)",
         "x_label": "Time (h)",
         "why": "Dayneka and Jusko's model I. The drug acts on the turnover of "
-               "a biomarker rather than on the biomarker itself, so response "
-               "lags exposure and washout is set by the biomarker's own loss "
-               "rate, not by the drug's half-life.",
+               "a biomarker rather than on the biomarker itself, so the "
+               "response lags exposure and washout depends on the biomarker's "
+               "own loss rate rather than the drug's half-life.",
         "reads": "Baseline is the untreated steady state KIN/KOUT, set through "
-                 "A_0(2) rather than estimated separately. The design carries "
-                 "as much weight as the structure: the biomarker's half-life "
-                 "is about five times the drug's, and without that separation "
-                 "a direct-effect model would fit just as well.",
+                 "A_0(2) instead of being estimated separately. The design "
+                 "matters as much as the structure here: the biomarker's "
+                 "half-life is about five times the drug's, and without that "
+                 "gap a direct-effect model would fit just as well.",
     },
     {
         "key": "tte_weibull",
@@ -110,14 +110,14 @@ CATALOGUE = [
         "y_label": "Event-free probability",
         "x_label": "Time (days)",
         "why": "Exposure on the hazard of a first event, with a Weibull "
-               "baseline so the hazard can rise or fall with time. The shape "
-               "of the survival curve is what most dropout and safety "
-               "analyses turn on.",
-        "reads": "Fitted on the likelihood, not a residual: a censored record "
-                 "contributes the survivor function, an event record the "
-                 "survivor times the hazard. LAPLACE LIKELIHOOD is required. "
-                 "The frailty term is written in but fixed at zero, because "
-                 "one event per subject cannot identify it.",
+               "baseline so the hazard can rise or fall with time. Most dropout "
+               "and safety analyses depend on the shape of the survival "
+               "curve.",
+        "reads": "Fitted on the likelihood rather than a residual. A censored "
+                 "record contributes the survivor function and an event record "
+                 "the survivor times the hazard. LAPLACE LIKELIHOOD is "
+                 "required. The frailty term is in the code but fixed at zero, "
+                 "because one event per subject can't identify it.",
     },
     {
         "key": "logistic_binary",
@@ -129,11 +129,11 @@ CATALOGUE = [
         "why": "The shape most exposure-safety and exposure-response analyses "
                "take when the endpoint is yes or no, with between-subject "
                "variability on the logit.",
-        "reads": "$PRED rather than a compartment model, and again a "
+        "reads": "Uses $PRED instead of a compartment model, and again a "
                  "likelihood: Y is the probability of the outcome that was "
-                 "actually observed. The endpoint is scored at six visits per "
-                 "subject, which is what makes the variance on the logit "
-                 "identifiable at all.",
+                 "observed. The endpoint is scored at six visits per subject, "
+                 "which is what makes the variance on the logit "
+                 "identifiable.",
     },
 ]
 
@@ -468,26 +468,27 @@ def _eda_block(key: str, df, fit: dict | None) -> str:
     get Table 1, which is the part that belongs with any dataset.
     """
     spec = COVARIATES.get(key, {})
-    blocks = ["<h3>Before any model: what is in the data</h3>",
+    blocks = ["<h3>The data, before any model</h3>",
               eda.table_one_html(eda.table_one(df, spec))]
 
     if key != "pk_2cmt_iv":
         return "".join(blocks)
 
     blocks.append(
-        '<p class="status">Covariates are summarised once per subject, not '
-        "once per record. Summarising per record makes a heavily sampled "
-        "subject count several times over, which is a quiet way to describe "
-        "a population that is not the one in the study.</p>")
+        '<p class="status">Covariates are summarised once per subject. '
+        "Summarising per record would count heavily sampled subjects several "
+        "times over and describe a different population from the one in the "
+        "study.</p>")
 
     profiles_l = eda.individual_profiles(df, LIGHT, annotate=("WT",))
     profiles_d = eda.individual_profiles(df, DARK, annotate=("WT",))
     if profiles_l and profiles_d:
         blocks.append(_fig_pair(
             profiles_l, profiles_d, "Individual profiles before fitting",
-            "The plot that chooses the structural model. The mean profile "
-            "cannot make this call: averaging curves with different "
-            "clearances bends the average whether or not any subject bends."))
+            "This is the plot to pick the structural model from. The mean "
+            "profile can't tell you, because averaging curves with different "
+            "clearances bends the average whether or not any subject's curve "
+            "bends."))
 
     if fit and "etas" in fit:
         screen = eda.covariate_screen(fit["etas"], df, spec)
@@ -498,8 +499,8 @@ def _eda_block(key: str, df, fit: dict | None) -> str:
             if light and dark:
                 blocks.append(_fig_pair(
                     light, dark, f"Covariate screen on eta for {eta}",
-                    "Weight is already in the model, so the flat line "
-                    "against it is the right answer, not a null result."))
+                    "Weight is already in the model, so a flat line "
+                    "against it is what you'd expect."))
     return "".join(blocks)
 
 
@@ -521,31 +522,29 @@ def _covariate_verdict(screen) -> str:
              f"<tbody>{rows}</tbody></table>")
 
     if flagged.empty:
-        verdict = ("Nothing clears the screening threshold, so there is no "
-                   "covariate here worth a further run.")
+        verdict = ("Nothing clears the screening threshold, so no covariate "
+                   "here needs a further run.")
     else:
         top = flagged.iloc[0]
         others = len(flagged) - 1
         verdict = (
             f"<b>{html.escape(str(top.label))}</b> against the random effect "
-            f"on {html.escape(str(top.eta))} is the strongest signal by a "
-            f"distance, at {top.strength:.2f} standard deviations between "
-            "groups, and it is not in the model. That is the next run to "
-            "make.")
+            f"on {html.escape(str(top.eta))} is by far the strongest signal, "
+            f"at {top.strength:.2f} standard deviations between groups, and "
+            "it isn't in the model yet. That's the next run to make.")
         if others:
             verdict += (
-                f" The remaining {others} above the threshold are weaker and "
-                "are most likely the same effect seen twice: the empirical "
-                "Bayes estimates for the two random effects are themselves "
-                "correlated, so a real shift in one shows up faintly in the "
-                "other.")
+                f" The other {others} above the threshold are weaker and "
+                "probably the same effect showing up again: the empirical "
+                "Bayes estimates for the two random effects are correlated, "
+                "so a real shift in one appears faintly in the other.")
     return (
         '<p class="status">Every random effect against every covariate, '
-        "ranked. Continuous covariates get a rank correlation, categorical "
-        "ones the gap in median eta between groups in standard deviations, "
-        "so the two are comparable. This ranks what to try next; whether a "
-        "covariate belongs in the model is settled by fitting it, not "
-        f"here.</p><p class=\"status\">{verdict}</p>{table}")
+        "ranked. Continuous covariates get a rank correlation and categorical "
+        "ones the gap in median eta between groups, in standard deviations, "
+        "so the two are on the same scale. The ranking only suggests what to "
+        "try next. Whether a covariate belongs in the model is decided by "
+        f"fitting it.</p><p class=\"status\">{verdict}</p>{table}")
 
 
 def _shrinkage_block(status: dict) -> str:
@@ -570,26 +569,26 @@ def _shrinkage_block(status: dict) -> str:
                if eps is not None else "")
 
     if worst < 0.20:
-        reading = ("All low, so the individual predictions below are "
-                   "genuinely individual and the etas can be trusted for "
-                   "spotting covariate relationships.")
+        reading = ("All low, so the individual predictions below really "
+                   "are individual and the etas are usable for spotting "
+                   "covariate relationships.")
     elif worst < 0.35:
-        reading = (f"{html.escape(worst_name)} is the one to watch; the rest "
-                   "carry enough subject-level information to be read "
+        reading = (f"Keep an eye on {html.escape(worst_name)}. The rest "
+                   "carry enough subject-level information to read "
                    "directly.")
     else:
         reading = (
-            f"{html.escape(worst_name)} is high enough to matter: those "
+            f"{html.escape(worst_name)} is high enough to matter. Those "
             "estimates have been pulled a long way back towards the "
-            "population, so the individual-prediction panel below flatters "
-            "that parameter, and an eta-versus-covariate plot on it would "
-            "be close to meaningless.")
+            "population, so the individual-prediction panel below makes that "
+            "parameter look better than it is, and an eta-versus-covariate "
+            "plot on it would tell you very little.")
 
-    return (f'<p class="status"><b>Shrinkage</b> &mdash; {parts}.{eps_txt} '
+    return (f'<p class="status"><b>Shrinkage</b>: {parts}.{eps_txt} '
             "Empirical Bayes estimates are a compromise between a subject's "
-            "own data and the population, so where a subject carries little "
-            "information the estimate collapses toward the population value "
-            f"and the spread of the etas understates OMEGA. {reading}</p>")
+            "own data and the population, so a subject with little "
+            "information ends up close to the population value and the "
+            f"spread of the etas understates OMEGA. {reading}</p>")
 
 
 def _comparison_block(status: dict) -> str:
@@ -607,20 +606,21 @@ def _comparison_block(status: dict) -> str:
             # markup being right.
             + (", p &lt; 0.0001" if p is not None and p < 1e-4
                else (f", p = {p:.3g}" if p is not None else "")))
-        caveat = (" The null sits on the edge of the parameter space here, "
-                  "so the chi-square reference is conservative and the real "
-                  "p-value is smaller than the one quoted."
+        caveat = (" The null is on the boundary of the parameter space, "
+                  "so the chi-square reference is conservative and the "
+                  "actual p-value is smaller than the one quoted."
                   if c.get("boundary") else "")
     else:
         better = "better" if c["delta_ofv"] > 0 else "worse"
         verdict = (f'the two have the same number of parameters, and the full '
                    f'model fits <b>{abs(c["delta_ofv"]):.1f}</b> objective '
                    f'function {better}')
-        caveat = (" Nothing is nested, so there is no likelihood ratio test "
-                  "to run; the objective functions are simply comparable.")
+        caveat = (" The models aren't nested, so there's no likelihood ratio "
+                  "test, but the objective functions can be compared "
+                  "directly.")
 
     return (
-        "<h3>Does the structure earn its place?</h3>"
+        "<h3>Against the simpler model</h3>"
         f'<p class="why">{html.escape(c["question"])}</p>'
         f'<p class="status">Refitting as <b>{html.escape(c["against"])}</b> '
         f'and re-estimating everything else: {verdict}.{caveat}</p>')
@@ -668,13 +668,13 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
 
         if "gof" not in fit:
             body.append(
-                '<p class="status">No goodness-of-fit panel or predictive '
-                "check here, and that is deliberate rather than missing. "
-                "Both are built on residuals, and a likelihood model has "
-                "none: the data is a zero or a one, so there is nothing to "
-                "subtract a prediction from. The figure above is the check "
-                "that applies instead &mdash; observed outcomes grouped by "
-                "exposure, against what the model says they should be.</p>")
+                "<p class=\"status\">There's no goodness-of-fit panel or "
+                "predictive check for this model. Both rely on residuals, and "
+                "a likelihood model doesn't have any: the data is a zero or a "
+                "one, so there's nothing to subtract a prediction from. The "
+                "figure above does that job instead, comparing observed "
+                "outcomes grouped by exposure with what the model predicts."
+                "</p>")
 
         body.append(_comparison_block(st))
 
@@ -685,8 +685,8 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
                 diagnostics.gof_panel(fit, LIGHT, bool(m.get("log"))),
                 diagnostics.gof_panel(fit, DARK, bool(m.get("log"))),
                 "Goodness of fit",
-                "The dashed line is unity; the orange line is a binned median "
-                "of the residuals, which should sit on zero."))
+                "The dashed line is unity. The orange line is a binned median "
+                "of the residuals and should sit on zero."))
 
             ind_l = diagnostics.individual_fits(
                 fit, LIGHT, log_scale=bool(m.get("log")),
@@ -697,8 +697,8 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
             if ind_l and ind_d:
                 body.append(_fig_pair(
                     ind_l, ind_d, "Individual fits",
-                    "Everything above averages over subjects. This is where a "
-                    "model that is wrong in a way the averages hide shows it."))
+                    "Everything above averages over subjects. Individual fits "
+                    "show problems that those averages can hide."))
 
         vpc_l = diagnostics.vpc_plot(fit, df, LIGHT, log_scale=bool(m.get("log")),
                                      y_label=m["y_label"], x_label=m["x_label"])
@@ -709,8 +709,9 @@ def _model_section(root: Path, m: dict, info: dict, checks: dict) -> str:
             # above it would only say the same words twice.
             body.append(_fig_pair(
                 vpc_l, vpc_d, "Visual predictive check",
-                "Goodness of fit can look tidy for a model that predicts the "
-                "wrong spread. This is the check that catches it."))
+                "Goodness-of-fit plots can look tidy for a model that "
+                "predicts the wrong spread. This shows whether the spread is "
+                "right."))
 
     chk = checks.get(key)
     if chk is None:
@@ -761,7 +762,7 @@ def _flag_summary(entries: list[dict], flagged: int) -> str:
     if all(m.startswith("$DES has no DADT") for m in errors):
         return (f"{lead}, {'each' if flagged != 1 else 'and it is'} a "
                 "compartment declared in $MODEL that no equation in $DES "
-                "assigns &mdash; usually a leftover, and NONMEM runs it "
+                "assigns. That's usually a leftover, and NONMEM runs it "
                 "without complaint.")
     return f"{lead}; open the Checks column for what was found."
 
@@ -833,20 +834,20 @@ def _collection_section(entries: list[dict]) -> str:
 
     return f"""<section class="model card" data-key="collection">
 <p class="family" style="color:var(--blue-ink)">Reference collection</p>
-<h2>{n} published models, read but not reproduced</h2>
+<h2>{n} published models, catalogued</h2>
 <p class="why">Control streams collected from published analyses and filed by
-topic. The five models above are written for this library; these are other
-people&rsquo;s, kept in a private repository. What is shown is what can be read
-off each stream mechanically &mdash; structure, estimation, the techniques it
-uses, and what the same static checks make of it &mdash; so the collection can be
-searched by technique without opening a file. Titles link to the stream for
-anyone with access.</p>
+topic. The five models above were written for this library; these are other
+people&rsquo;s and are kept in a private repository. The table shows what can be
+read off each stream automatically (structure, estimation method, techniques
+used and what the static checks find), so you can search the collection by
+technique without opening any files. Titles link to the stream if you have
+access.</p>
 <div class="tiles">{"".join(tiles)}</div>
 
 <h3>Techniques in use</h3>
-<p class="status">Detected from the code, not from the file name, so a technique
-written in an unusual way can be missed. Select one to list the streams that
-use it.</p>
+<p class="status">Detected from the code rather than the file name, so a
+technique written in an unusual way may be missed. Select one to list the
+streams that use it.</p>
 <ul class="bars">{bars}</ul>
 
 <h3>Browse</h3>
@@ -877,11 +878,11 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
 
     parts = ["""<header>
   <h1>NONMEM model library</h1>
-  <p class="lede">Control streams for the model types that come up repeatedly
-  in drug development &mdash; population PK, tumour growth inhibition,
-  indirect response, time to event and a binary exposure&ndash;response. Each
-  one is fitted here, diagnosed, and tested against the simpler model it
-  would have to beat to be worth writing.</p>
+  <p class="lede">Control streams for five model types that come up a lot in
+  drug development: population PK, tumour growth inhibition, indirect
+  response, time to event and binary exposure&ndash;response. Each one is
+  fitted to simulated data, diagnosed, and compared with the simpler model it
+  has to beat.</p>
 </header>"""]
 
     tabs = ['<button class="tab" data-target="all" aria-pressed="true">'
@@ -917,8 +918,8 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
     tiles = [
         _tile(str(len(fitted)), "models estimated from their own data",
               f"of {len(CATALOGUE)}"),
-        _tile(str(earned), "models whose distinguishing feature pays for "
-                           "itself", f"of {len(comparisons)}"),
+        _tile(str(earned), "models that beat their simpler alternative",
+              f"of {len(comparisons)}"),
         _tile(str(n_pass), "control streams passing every static check",
               f"of {len(checks)}"),
         _tile(f"{seconds / 60:.0f} min", "to fit the whole library, on one core"),
@@ -932,9 +933,9 @@ def build_site(root: Path, out: Path, summary: dict) -> Path:
 
     generated = dt.datetime.now().strftime("%d %B %Y")
     parts.append(f"""<footer>
-  Generated {generated} by <code>python -m nmlib.build</code>: datasets
-  simulated, models fitted, control streams checked and every figure drawn by
-  that one command. Source:
+  Generated {generated} by <code>python -m nmlib.build</code>, which
+  simulates the data, fits the models, checks the control streams and draws
+  the figures. Source:
   <a href="https://github.com/Wrlog/nonmem-model-library">Wrlog/nonmem-model-library</a>.
 </footer>""")
 

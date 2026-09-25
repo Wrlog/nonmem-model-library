@@ -289,8 +289,8 @@ def covariate_plot(etas: pd.DataFrame, data: pd.DataFrame, spec: dict,
              ha="left", va="top", fontsize=SIZE_TITLE, color=theme.ink,
              fontweight="600")
     fig.text(0.0, 0.955,
-             "A covariate already in the model should leave no trend here; "
-             "one that is not, and does, is the next run to make",
+             "A covariate already in the model should show no trend here; "
+             "one that isn't in the model but trends is the next to try",
              ha="left", va="top", fontsize=SIZE_SUBTITLE, color=theme.ink_3)
     fig.tight_layout(rect=(0, 0, 1, 0.90), h_pad=2.6, w_pad=1.6)
     return finish(fig)
